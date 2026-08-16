@@ -1,0 +1,16 @@
+{
+  "name": "charisma-promoter-bot",
+  "version": "2.0.0",
+  "description": "بوت الكاريزما الفاخر - خادم الويب والترويج",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.6.0",
+    "express": "^4.19.2",
+    "fs-extra": "^11.2.0",
+    "pino": "^8.19.0",
+    "qrcode": "^1.5.3"
+  }
+}
