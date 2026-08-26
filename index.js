@@ -1,4 +1,4 @@
-// تفعيل التشفير لضمان عمل Baileys على كافة البيئات السحابية
+// تفعيل التشفير لضمان توافق مكتبة Baileys على كافة البيئات السحابية
 const crypto = require('crypto');
 if (!global.crypto) {
     global.crypto = crypto.webcrypto || crypto;
@@ -107,7 +107,7 @@ function cleanTextStrictly(text) {
     return cleaned.replace(/^[\s,؛!؟.-]+/, '').trim();
 }
 
-// ================= GEMINI API DIRECT REQUEST (BASED ON YOUR CURL SPEC) =================
+// ================= GEMINI STRICT HISTORY & MULTI-MODEL ENGINE =================
 async function generateAiResponse(userId, prompt) {
     await incrementRequests(userId);
 
@@ -124,41 +124,83 @@ async function generateAiResponse(userId, prompt) {
     }
 
     try {
-        // جلب المحادثات السابقة لضمان الذاكرة وتدفق الحديث
-        const rows = await db.all("SELECT role, content FROM history WHERE user_id = ? ORDER BY timestamp ASC LIMIT 14", [userId]);
+        // جلب المحادثات السابقة لتنسيقها بما يتوافق مع شروط Gemini API
+        const rows = await db.all("SELECT role, content FROM history WHERE user_id = ? ORDER BY timestamp ASC LIMIT 10", [userId]);
         
-        const contents = [];
+        const rawHistory = [];
         for (const row of rows) {
-            contents.push({
+            rawHistory.push({
                 role: row.role === 'assistant' ? 'model' : 'user',
-                parts: [{ text: row.content }]
+                text: row.content
             });
         }
         
-        contents.push({
-            role: 'user',
-            parts: [{ text: prompt }]
-        });
-
-        // الرابط برئاسة الاتصال X-goog-api-key تماماً كما ورد في أمر curl الخاص بك
-        const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
+        // إعادة تنظيم الذاكرة لمنع الأدوار المتتالية المرفوضة في Gemini
+        const cleanedContents = [];
+        let lastRole = null;
         
-        const payload = {
-            contents: contents,
-            systemInstruction: {
-                parts: [{ text: SYSTEM_PROMPT }]
+        for (const item of rawHistory) {
+            if (!item.text || !item.text.trim()) continue;
+            // يجب أن تبدأ المحادثة دائماً بـ user
+            if (cleanedContents.length === 0 && item.role === 'model') continue;
+            
+            if (item.role === lastRole) {
+                // دمج الرسائل المتتالية التابعة لنفس الدور
+                cleanedContents[cleanedContents.length - 1].parts[0].text += "\n" + item.text;
+            } else {
+                cleanedContents.push({
+                    role: item.role,
+                    parts: [{ text: item.text }]
+                });
+                lastRole = item.role;
             }
-        };
+        }
+        
+        // دمج أو إضافة الرسالة الحالية
+        if (lastRole === 'user' && cleanedContents.length > 0) {
+            cleanedContents[cleanedContents.length - 1].parts[0].text += "\n" + prompt;
+        } else {
+            cleanedContents.push({
+                role: 'user',
+                parts: [{ text: prompt }]
+            });
+        }
 
-        const response = await axios.post(url, payload, {
-            headers: { 
-                'Content-Type': 'application/json',
-                'X-goog-api-key': GEMINI_API_KEY
-            },
-            timeout: 18000
-        });
+        // النماذج الرسمية المجربة للتبديل التلقائي
+        const modelsToTry = [
+            'gemini-1.5-flash',
+            'gemini-2.5-flash-preview-09-2025',
+            'gemini-2.0-flash',
+            'gemini-1.5-pro'
+        ];
 
-        let replyText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        let replyText = null;
+
+        for (const modelName of modelsToTry) {
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
+                
+                const payload = {
+                    contents: cleanedContents,
+                    systemInstruction: {
+                        parts: [{ text: SYSTEM_PROMPT }]
+                    }
+                };
+
+                const response = await axios.post(url, payload, {
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-goog-api-key': GEMINI_API_KEY
+                    },
+                    timeout: 15000
+                });
+
+                replyText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (replyText) break;
+            } catch (err) {
+                console.error(`❌ خطأ في نموذج ${modelName}:`, err.response?.data?.error?.message || err.message);
+            }
+        }
 
         if (replyText) {
             replyText = cleanTextStrictly(replyText);
@@ -166,12 +208,12 @@ async function generateAiResponse(userId, prompt) {
             await saveMessage(userId, "assistant", replyText);
             return replyText;
         } else {
-            throw new Error("استجابة فارغة من خادم Gemini");
+            throw new Error("لم تنجح النماذج المستدعاة.");
         }
 
     } catch (err) {
-        console.error("❌ Gemini Direct API Error:", err.response?.data || err.message);
-        return "حدث خطأ في جلب الإجابة من السيرفر. أعد إرسال استفسارك مباشرة.";
+        console.error("❌ Gemini API Processing Error:", err.message);
+        return "حدث خطأ في الاتصال بالذكاء الاصطناعي. يرجى إعادة المحاولة.";
     }
 }
 
