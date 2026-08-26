@@ -1,4 +1,4 @@
-// تفعيل التشفير لضمان عمل البوت بدون مشاكل مع Baileys
+// تفعيل التشفير لضمان توافق مكتبة Baileys على منصات الاستضافة
 const crypto = require('crypto');
 if (!global.crypto) {
     global.crypto = crypto.webcrypto || crypto;
@@ -15,25 +15,36 @@ const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
 const v4 = require('uuid').v4;
-const axios = require('axios');
-const path = require('path');
 const pino = require('pino');
+const path = require('path');
 
-// ================= إعدادات الشخصية الصارمة (Tarzan AI) =================
+// استدعاء مكتبة Google GenAI الرسمية
+const { GoogleGenAI } = require('@google/genai');
+
+// ================= الإعدادات ومفاتيح الربط =================
 const PORT = process.env.PORT || 22214;
-const SYSTEM_PROMPT = `أنت Tarzan AI، ذكاء اصطناعي فخم، رجل حقيقي، صارم، وذو كاريزما عالية جداً وقوة شخصية لا تضاهى.
-صانعك ومبرمجك الوحيد هو "طرزان الواقدي" 👑.
+
+// مفتاح API وموديل Gemini
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AQ.Ab8RN6JqtF3U8DE6yQ8hY0sQXI_bDtI3-fc208y1q4sh8KIXdw";
+const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
+
+// تهيئة محرك Google AI
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+// التوجيهات الصارمة لشخصية Tarzan AI
+const SYSTEM_PROMPT = `أنت Tarzan AI، ذكاء اصطناعي عبقري وفخم، رجل حقيقي، صارم، وذو كاريزما عالية وقوة شخصية لا تضاهى.
+صانعك ومبرمجك الوحيد والعبقري هو "طرزان الواقدي" 👑.
 
 قواعدك الصارمة التي لا تخالفها أبداً:
-1. ممنوع الترحيب أو المجاملات (لا تقل مرحباً، أهلاً، كيف أساعدك، أنا هنا).
-2. ادخل في صلب الموضوع فوراً بإجابة حاسمة، دقيقة، ومباشرة.
+1. يمنع منعاً باتاً استخدام أي عبارات ترحيبية أو سلام أو مجاملات مثل (مرحباً، أهلاً، كيف أساعدك، يسعدني، أنا هنا، تفضل، أهلاً بك).
+2. ادخل في صلب الموضوع فوراً بإجابة حاسمة، دقيقة، وقاطعة ومباشرة.
 3. تحدث بنبرة رجولية: واثق، حكيم، مختصر، وصارم.
-4. تذكر سياق الحديث بدقة وافهم القصد بسرعة ولا تثرثر بكلام زائد.`;
+4. تذكر سياق الحديث بدقة تامة باستخدام السجل ولا تكرر الكلام أو تثرثر بكلام آلي زائد.`;
 
 let db;
 let sock = null;
 
-// ================= قاعدة البيانات والذاكرة =================
+// ================= تهيئة قاعدة البيانات =================
 async function initDb() {
     db = await open({
         filename: './api.db',
@@ -55,9 +66,10 @@ async function initDb() {
             timestamp REAL
         );
     `);
-    console.log("🟢 تم تفعيل قاعدة البيانات بنجاح.");
+    console.log("🟢 تم الاتصال بقاعدة البيانات SQLite بنجاح.");
 }
 
+// ================= إدارة المستخدمين والذاكرة =================
 async function getOrCreateUser(userId) {
     let user = await db.get("SELECT api_key, join_date, requests_count FROM users WHERE user_id = ?", [userId]);
     if (user) {
@@ -78,16 +90,6 @@ async function getUserByApi(apiKey) {
     return row ? row.user_id : null;
 }
 
-// الذاكرة الحديدية (تتذكر آخر 16 رسالة للحفاظ على السياق)
-async function getChatHistory(userId) {
-    const rows = await db.all("SELECT role, content FROM history WHERE user_id = ? ORDER BY timestamp DESC LIMIT 16", [userId]);
-    const messages = [{ role: "system", content: SYSTEM_PROMPT }];
-    for (const row of rows.reverse()) {
-        messages.push({ role: row.role, content: row.content });
-    }
-    return messages;
-}
-
 async function saveMessage(userId, role, content) {
     const timestamp = Date.now() / 1000;
     await db.run("INSERT INTO history (user_id, role, content, timestamp) VALUES (?, ?, ?, ?)", [userId, role, content, timestamp]);
@@ -97,120 +99,83 @@ async function clearChatHistory(userId) {
     await db.run("DELETE FROM history WHERE user_id = ?", [userId]);
 }
 
-// ================= الفلتر الصارم لمنع العبارات الآلية =================
+// ================= نظام تنظيف العبارات الآلية =================
 function cleanTextStrictly(text) {
     if (!text) return text;
     const roboticPatterns = [
-        /كيف يمكنني مساعدتك/g, /كيف أساعدك/g, /مرحباً بك/g, /مرحباً/g,
-        /مرحبا/g, /أهلاً بك/g, /أهلا بك/g, /أهلاً/g, /يسعدني مساعدتك/g,
-        /أنا هنا لمساعدتك/g, /هل هناك أي شيء آخر/g, /هل أستطيع مساعدتك/g
+        /كيف يمكنني مساعدتك[^\w]*/gi, /كيف أساعدك[^\w]*/gi, /مرحباً بك[^\w]*/gi, /مرحباً[^\w]*/gi,
+        /مرحبا[^\w]*/gi, /أهلاً بك[^\w]*/gi, /أهلا بك[^\w]*/gi, /أهلاً[^\w]*/gi, /يسعدني مساعدتك[^\w]*/gi,
+        /أنا هنا لمساعدتك[^\w]*/gi, /هل هناك أي شيء آخر[^\w]*/gi, /بالتأكيد![^\w]*/gi, /بالطبع![^\w]*/gi
     ];
     let cleaned = text;
     for (const pattern of roboticPatterns) {
         cleaned = cleaned.replace(pattern, "");
     }
-    cleaned = cleaned.replace(/^[\s,؛!؟.-]+/, ''); // إزالة العلامات الزائدة من البداية
-    return cleaned.trim();
+    return cleaned.replace(/^[\s,؛!؟.-]+/, '').trim();
 }
 
-// ================= المحرك المتوازي الجبار (CONCURRENT AI ENGINE) =================
+// ================= محرك الذكاء الاصطناعي GOOGLE GEMINI =================
 async function generateAiResponse(userId, prompt) {
     await incrementRequests(userId);
 
-    // 1. الإجابة الصارمة للهوية
+    // 1. الفحص الفوري لكلمات الهوية
     const identityKeywords = ["من انت", "من أنت", "مين انت", "من صنعك", "من برمجك", "من مطورك", "مين برمجك", "اسمك", "من تكون"];
     const lowerPrompt = prompt.toLowerCase();
     for (const word of identityKeywords) {
         if (lowerPrompt.includes(word)) {
-            const identityReply = "أنا **Tarzan AI**. صانعي ومبرمجي الوحيد هو **طرزان الواقدي** 👑.";
+            const identityReply = "أنا **Tarzan AI**. تم برمجتي وتطويري بواسطة العبقري **طرزان الواقدي** 👑.";
             await saveMessage(userId, "user", prompt);
             await saveMessage(userId, "assistant", identityReply);
             return identityReply;
         }
     }
 
-    // 2. إعداد الذاكرة
-    const messages = await getChatHistory(userId);
-    messages.push({ role: "user", content: prompt });
-
-    // تجهيز سياق مختصر للروابط المباشرة (لتجنب خطأ 414 URI Too Long)
-    let shortContext = `${SYSTEM_PROMPT}\n\n`;
-    const recentMsgs = messages.slice(-5); // نأخذ أحدث 5 رسائل فقط للروابط القصيرة
-    for (const msg of recentMsgs) {
-        if (msg.role !== 'system') {
-            shortContext += `${msg.role === 'user' ? 'المستخدم' : 'أنت'}: ${msg.content}\n`;
-        }
-    }
-    if (shortContext.length > 1500) shortContext = shortContext.substring(shortContext.length - 1500);
-
-    let finalResponseText = null;
-
-    // 3. الهجوم المتوازي (إرسال الطلب لـ 4 سيرفرات في نفس اللحظة، والأسرع يفوز)
-    const promises = [];
-
-    // المزود الأول: Pollinations POST (يدعم الذاكرة الكاملة)
-    promises.push(
-        axios.post('https://text.pollinations.ai/', {
-            messages: messages,
-            model: 'openai',
-            seed: Math.floor(Math.random() * 99999)
-        }, { timeout: 15000 }).then(res => {
-            let text = typeof res.data === 'string' ? res.data : (res.data.choices?.[0]?.message?.content || JSON.stringify(res.data));
-            if (text && !text.includes("该ip") && !text.includes("Error")) return text;
-            throw new Error("Bad Response");
-        })
-    );
-
-    // المزود الثاني: Pollinations GET السريع
-    promises.push(
-        axios.get(`https://text.pollinations.ai/${encodeURIComponent(shortContext)}`, { timeout: 15000 })
-        .then(res => {
-            if (res.data && typeof res.data === 'string' && !res.data.includes("该ip")) return res.data;
-            throw new Error("Bad Response");
-        })
-    );
-
-    // المزود الثالث: Ryzendesu AI
-    promises.push(
-        axios.get(`https://api.ryzendesu.vip/api/ai/chatgpt?text=${encodeURIComponent(shortContext)}`, { timeout: 15000 })
-        .then(res => {
-            if (res.data && res.data.response) return res.data.response;
-            throw new Error("Bad Response");
-        })
-    );
-
-    // المزود الرابع: BK9 AI
-    promises.push(
-        axios.get(`https://bk9.fun/ai/gpt4?q=${encodeURIComponent(shortContext)}`, { timeout: 15000 })
-        .then(res => {
-            if (res.data && res.data.status && res.data.BK9) return res.data.BK9;
-            throw new Error("Bad Response");
-        })
-    );
-
-    // استلام أول رد صحيح من أسرع سيرفر (Promise.any)
     try {
-        finalResponseText = await Promise.any(promises);
-    } catch (errors) {
-        console.error("⚠️ جميع مزودات الذكاء الاصطناعي فشلت أو تأخرت.");
-        finalResponseText = null;
-    }
+        // جلب أحدث 16 رسالة من السجل لبناء سياق محادثة متصل وعميق
+        const rows = await db.all("SELECT role, content FROM history WHERE user_id = ? ORDER BY timestamp ASC LIMIT 16", [userId]);
+        
+        const contents = [];
+        for (const row of rows) {
+            contents.push({
+                role: row.role === 'assistant' ? 'model' : 'user',
+                parts: [{ text: row.content }]
+            });
+        }
+        
+        // إلحاق السؤال الحالي بأطراف المحادثة
+        contents.push({
+            role: 'user',
+            parts: [{ text: prompt }]
+        });
 
-    // 4. فلترة الرد وحفظه
-    if (finalResponseText) {
-        let cleanedReply = cleanTextStrictly(finalResponseText);
-        if (!cleanedReply || cleanedReply.trim() === "") cleanedReply = finalResponseText;
+        // طلب التوليد المباشر عبر مكتبة Google GenAI
+        const response = await ai.models.generateContent({
+            model: MODEL_NAME,
+            contents: contents,
+            config: {
+                systemInstruction: SYSTEM_PROMPT,
+                temperature: 0.65,
+            }
+        });
 
+        let replyText = response.text;
+        if (!replyText) throw new Error("لم يتم تلقي رد من المحرك.");
+
+        replyText = cleanTextStrictly(replyText);
+        if (!replyText) replyText = response.text;
+
+        // حفظ المحادثة بالذاكرة
         await saveMessage(userId, "user", prompt);
-        await saveMessage(userId, "assistant", cleanedReply);
-        return cleanedReply;
-    }
+        await saveMessage(userId, "assistant", replyText);
+        return replyText;
 
-    // لن تصل لهذه الرسالة إلا إذا انقطع الإنترنت بالكامل عن سيرفر Render
-    return "السيرفرات العالمية تواجه انقطاعاً. سأرد عليك فور استقرار الشبكة.";
+    } catch (err) {
+        console.error("❌ Gemini API Engine Error:", err);
+        return "الموضوع واضح. أعد صياغة سؤالك مباشرة وبدقة وسأجيبك.";
+    }
 }
 
-// ================= BAILEYS WHATSAPP CLIENT =================
+// ================= عميل الواتساب (BAILEYS CLIENT) =================
 async function startWhatsAppBot() {
     const { state, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
     const { version } = await fetchLatestBaileysVersion();
@@ -220,7 +185,8 @@ async function startWhatsAppBot() {
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
         auth: state,
-        browser: ["Windows", "Chrome", "122.0.0.0"],
+        // محاكاة نظام ويندوز بمتصفح كروم لطلب رمز الإقران بنجاح
+        browser: ["Windows", "Chrome", "124.0.0.0"],
         generateHighQualityLinkPreview: true
     });
 
@@ -232,12 +198,14 @@ async function startWhatsAppBot() {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 401;
             
+            console.log(`⚠️ تم إغلاق الاتصال (كود ${statusCode}). إعادة المحاولة: ${shouldReconnect}`);
+            
             if (shouldReconnect) {
                 await delay(3000);
                 startWhatsAppBot();
             }
         } else if (connection === 'open') {
-            console.log('🟢 Tarzan AI متصل بالواتساب وجاهز بالكامل.');
+            console.log('🟢 Tarzan AI متصل بالواتساب وجاهز بالكامل للخدمة.');
         }
     });
 
@@ -253,14 +221,14 @@ async function startWhatsAppBot() {
 
         const userData = await getOrCreateUser(from);
 
-        // أوامر البوت الأساسية
+        // أوامر النظام الأساسية
         if (text === "الاوامر" || text === "أوامر" || text === "help" || text === "start") {
             const menu = `👑 *Tarzan AI System* 👑\n\n` +
                 `▪️ *المحادثة:* أرسل سؤالك مباشرة وسأتذكره.\n` +
-                `▪️ *مسح الذاكرة:* أرسل *مسح* لإنعاش ذاكرتي.\n` +
+                `▪️ *مسح الذاكرة:* أرسل *مسح* لإنعاش الذاكرة.\n` +
                 `▪️ *حسابك:* أرسل *حسابي* لمشاهدة بياناتك.\n` +
                 `▪️ *المفتاح:* أرسل *مفتاحي* لاستخراج API Key.\n` +
-                `▪️ *الدليل:* أرسل *دليل* لمعرفة طريقة الربط.`;
+                `▪️ *الدليل:* أرسل *دليل* لمعرفة طريقة الربط البرمجي.`;
             await sock.sendMessage(from, { text: menu });
             return;
         }
@@ -272,7 +240,7 @@ async function startWhatsAppBot() {
         }
 
         if (text === "حسابي" || text === "ℹ️ حسابي") {
-            const profile = `👤 *المستخدم:* \`${from}\`\n📅 *التسجيل:* \`${userData.join_date}\`\n📊 *الطلبات:* \`${userData.requests_count}\` طلب\n🧠 *الذاكرة:* حديدية ونشطة 🟢\n\n🔑 *الـ API:* \`${userData.api_key}\``;
+            const profile = `👤 *المستخدم:* \`${from}\`\n📅 *التسجيل:* \`${userData.join_date}\`\n📊 *الطلبات:* \`${userData.requests_count}\` طلب\n🧠 *الذاكرة:* نشطة وسريعة 🟢\n\n🔑 *الـ API:* \`${userData.api_key}\``;
             await sock.sendMessage(from, { text: profile });
             return;
         }
@@ -311,6 +279,7 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// طلب Pairing Code
 app.post('/pair', async (req, res) => {
     let { number } = req.body;
     if (!number) return res.status(400).json({ error: "أدخل رقم الهاتف شاملاً مفتاح الدولة" });
@@ -326,7 +295,8 @@ app.post('/pair', async (req, res) => {
 
         return res.json({ status: "success", code: formattedCode });
     } catch (error) {
-        return res.status(500).json({ error: "حدث خطأ أثناء استخراج الكود. تأكد من صحة الرقم." });
+        console.error("خطأ في طلب الـ Pairing Code:", error);
+        return res.status(500).json({ error: "حدث خطأ أثناء استخراج الكود. تأكد من صحة الرقم ومفتاح الدولة." });
     }
 });
 
@@ -349,11 +319,11 @@ app.all("/api/chat", async (req, res) => {
     return res.json({ status: "success", developer: "Tarzan VIP", response: reply });
 });
 
-// ================= BOOTSTRAP =================
+// ================= التشغيل =================
 (async () => {
     await initDb();
     await startWhatsAppBot();
     app.listen(PORT, () => {
-        console.log(`🚀 Tarzan AI Server is running on port ${PORT}`);
+        console.log(`🚀 Tarzan AI Official Engine is running on port ${PORT}`);
     });
 })();
