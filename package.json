@@ -1,14 +1,14 @@
 {
   "name": "tarzan-ai-whatsapp",
-  "version": "3.0.0",
-  "description": "Tarzan AI WhatsApp Bot powered by Official Google Generative AI SDK",
+  "version": "3.4.0",
+  "description": "Tarzan AI WhatsApp Bot configured for Gemini API",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.21.0",
     "@whiskeysockets/baileys": "^6.7.8",
+    "axios": "^1.7.2",
     "express": "^4.19.2",
     "pino": "^9.1.0",
     "sqlite": "^5.1.1",
