@@ -1,4 +1,4 @@
-// تفعيل التشفير لضمان توافق مكتبة Baileys على منصات الاستضافة
+// تفعيل التشفير لضمان توافق Baileys
 const crypto = require('crypto');
 if (!global.crypto) {
     global.crypto = crypto.webcrypto || crypto;
@@ -18,20 +18,18 @@ const v4 = require('uuid').v4;
 const pino = require('pino');
 const path = require('path');
 
-// استدعاء مكتبة Google GenAI الرسمية
-const { GoogleGenAI } = require('@google/genai');
+// استدعاء مكتبة جوجل الرسمية المعتمدة
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // ================= الإعدادات ومفاتيح الربط =================
 const PORT = process.env.PORT || 22214;
 
-// مفتاح API وموديل Gemini
+// مفتاح API وموديل جيميناي
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AQ.Ab8RN6JqtF3U8DE6yQ8hY0sQXI_bDtI3-fc208y1q4sh8KIXdw";
-const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
 
-// تهيئة محرك Google AI
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// التوجيهات الصارمة لشخصية Tarzan AI
+// الشخصية الصارمة والكاريزماتية لـ Tarzan AI
 const SYSTEM_PROMPT = `أنت Tarzan AI، ذكاء اصطناعي عبقري وفخم، رجل حقيقي، صارم، وذو كاريزما عالية وقوة شخصية لا تضاهى.
 صانعك ومبرمجك الوحيد والعبقري هو "طرزان الواقدي" 👑.
 
@@ -39,12 +37,12 @@ const SYSTEM_PROMPT = `أنت Tarzan AI، ذكاء اصطناعي عبقري و�
 1. يمنع منعاً باتاً استخدام أي عبارات ترحيبية أو سلام أو مجاملات مثل (مرحباً، أهلاً، كيف أساعدك، يسعدني، أنا هنا، تفضل، أهلاً بك).
 2. ادخل في صلب الموضوع فوراً بإجابة حاسمة، دقيقة، وقاطعة ومباشرة.
 3. تحدث بنبرة رجولية: واثق، حكيم، مختصر، وصارم.
-4. تذكر سياق الحديث بدقة تامة باستخدام السجل ولا تكرر الكلام أو تثرثر بكلام آلي زائد.`;
+4. تذكر سياق الحديث بدقة تامة ولا تثرثر بكلام زائد.`;
 
 let db;
 let sock = null;
 
-// ================= تهيئة قاعدة البيانات =================
+// ================= DATABASE INITIALIZATION =================
 async function initDb() {
     db = await open({
         filename: './api.db',
@@ -66,10 +64,9 @@ async function initDb() {
             timestamp REAL
         );
     `);
-    console.log("🟢 تم الاتصال بقاعدة البيانات SQLite بنجاح.");
+    console.log("🟢 قاعدة البيانات وقيم الجلسات جاهزة.");
 }
 
-// ================= إدارة المستخدمين والذاكرة =================
 async function getOrCreateUser(userId) {
     let user = await db.get("SELECT api_key, join_date, requests_count FROM users WHERE user_id = ?", [userId]);
     if (user) {
@@ -99,7 +96,7 @@ async function clearChatHistory(userId) {
     await db.run("DELETE FROM history WHERE user_id = ?", [userId]);
 }
 
-// ================= نظام تنظيف العبارات الآلية =================
+// ================= STRICT TEXT FILTER =================
 function cleanTextStrictly(text) {
     if (!text) return text;
     const roboticPatterns = [
@@ -114,16 +111,16 @@ function cleanTextStrictly(text) {
     return cleaned.replace(/^[\s,؛!؟.-]+/, '').trim();
 }
 
-// ================= محرك الذكاء الاصطناعي GOOGLE GEMINI =================
+// ================= GEMINI OFFICIAL AI ENGINE =================
 async function generateAiResponse(userId, prompt) {
     await incrementRequests(userId);
 
-    // 1. الفحص الفوري لكلمات الهوية
+    // التحقق المباشر من الهوية
     const identityKeywords = ["من انت", "من أنت", "مين انت", "من صنعك", "من برمجك", "من مطورك", "مين برمجك", "اسمك", "من تكون"];
     const lowerPrompt = prompt.toLowerCase();
     for (const word of identityKeywords) {
         if (lowerPrompt.includes(word)) {
-            const identityReply = "أنا **Tarzan AI**. تم برمجتي وتطويري بواسطة العبقري **طرزان الواقدي** 👑.";
+            const identityReply = "أنا **Tarzan AI**. صانعي ومبرمجي الوحيد هو العبقري **طرزان الواقدي** 👑.";
             await saveMessage(userId, "user", prompt);
             await saveMessage(userId, "assistant", identityReply);
             return identityReply;
@@ -131,51 +128,42 @@ async function generateAiResponse(userId, prompt) {
     }
 
     try {
-        // جلب أحدث 16 رسالة من السجل لبناء سياق محادثة متصل وعميق
+        // جلب أحدث 16 رسالة من السجل لبناء الذاكرة
         const rows = await db.all("SELECT role, content FROM history WHERE user_id = ? ORDER BY timestamp ASC LIMIT 16", [userId]);
         
-        const contents = [];
+        const history = [];
         for (const row of rows) {
-            contents.push({
+            history.push({
                 role: row.role === 'assistant' ? 'model' : 'user',
                 parts: [{ text: row.content }]
             });
         }
-        
-        // إلحاق السؤال الحالي بأطراف المحادثة
-        contents.push({
-            role: 'user',
-            parts: [{ text: prompt }]
+
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash",
+            systemInstruction: SYSTEM_PROMPT
         });
 
-        // طلب التوليد المباشر عبر مكتبة Google GenAI
-        const response = await ai.models.generateContent({
-            model: MODEL_NAME,
-            contents: contents,
-            config: {
-                systemInstruction: SYSTEM_PROMPT,
-                temperature: 0.65,
-            }
-        });
+        const chat = model.startChat({ history });
+        const result = await chat.sendMessage(prompt);
+        let replyText = result.response.text();
 
-        let replyText = response.text;
-        if (!replyText) throw new Error("لم يتم تلقي رد من المحرك.");
+        if (!replyText) throw new Error("استجابة فارغة من Gemini");
 
         replyText = cleanTextStrictly(replyText);
-        if (!replyText) replyText = response.text;
+        if (!replyText) replyText = result.response.text();
 
-        // حفظ المحادثة بالذاكرة
         await saveMessage(userId, "user", prompt);
         await saveMessage(userId, "assistant", replyText);
         return replyText;
 
     } catch (err) {
-        console.error("❌ Gemini API Engine Error:", err);
-        return "الموضوع واضح. أعد صياغة سؤالك مباشرة وبدقة وسأجيبك.";
+        console.error("Gemini API Error:", err);
+        return "أنا أسمعك. أعد إرسال سؤالك مباشرة وسأجيبك فوراً.";
     }
 }
 
-// ================= عميل الواتساب (BAILEYS CLIENT) =================
+// ================= BAILEYS WHATSAPP CLIENT =================
 async function startWhatsAppBot() {
     const { state, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
     const { version } = await fetchLatestBaileysVersion();
@@ -185,7 +173,6 @@ async function startWhatsAppBot() {
         logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
         auth: state,
-        // محاكاة نظام ويندوز بمتصفح كروم لطلب رمز الإقران بنجاح
         browser: ["Windows", "Chrome", "124.0.0.0"],
         generateHighQualityLinkPreview: true
     });
@@ -198,18 +185,15 @@ async function startWhatsAppBot() {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 401;
             
-            console.log(`⚠️ تم إغلاق الاتصال (كود ${statusCode}). إعادة المحاولة: ${shouldReconnect}`);
-            
             if (shouldReconnect) {
                 await delay(3000);
                 startWhatsAppBot();
             }
         } else if (connection === 'open') {
-            console.log('🟢 Tarzan AI متصل بالواتساب وجاهز بالكامل للخدمة.');
+            console.log('🟢 Tarzan AI متصل رسمياً عبر Google Gemini ومتفرج بالكامل.');
         }
     });
 
-    // معالجة الرسائل الواردة
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
@@ -221,26 +205,25 @@ async function startWhatsAppBot() {
 
         const userData = await getOrCreateUser(from);
 
-        // أوامر النظام الأساسية
         if (text === "الاوامر" || text === "أوامر" || text === "help" || text === "start") {
-            const menu = `👑 *Tarzan AI System* 👑\n\n` +
+            const menu = `👑 *Tarzan AI - Official Gemini* 👑\n\n` +
                 `▪️ *المحادثة:* أرسل سؤالك مباشرة وسأتذكره.\n` +
-                `▪️ *مسح الذاكرة:* أرسل *مسح* لإنعاش الذاكرة.\n` +
+                `▪️ *مسح الذاكرة:* أرسل *مسح* لتصفير الذاكرة.\n` +
                 `▪️ *حسابك:* أرسل *حسابي* لمشاهدة بياناتك.\n` +
                 `▪️ *المفتاح:* أرسل *مفتاحي* لاستخراج API Key.\n` +
-                `▪️ *الدليل:* أرسل *دليل* لمعرفة طريقة الربط البرمجي.`;
+                `▪️ *الدليل:* أرسل *دليل* لمعرفة طريقة الربط.`;
             await sock.sendMessage(from, { text: menu });
             return;
         }
 
         if (text === "مسح" || text === "clear" || text === "مسح الذاكرة") {
             await clearChatHistory(from);
-            await sock.sendMessage(from, { text: "🧹 تم مسح الذاكرة بالكامل. تحدث معي في موضوع جديد." });
+            await sock.sendMessage(from, { text: "🧹 تم مسح الذاكرة بنجاح. ابدأ موضوعاً جديداً." });
             return;
         }
 
         if (text === "حسابي" || text === "ℹ️ حسابي") {
-            const profile = `👤 *المستخدم:* \`${from}\`\n📅 *التسجيل:* \`${userData.join_date}\`\n📊 *الطلبات:* \`${userData.requests_count}\` طلب\n🧠 *الذاكرة:* نشطة وسريعة 🟢\n\n🔑 *الـ API:* \`${userData.api_key}\``;
+            const profile = `👤 *المستخدم:* \`${from}\`\n📅 *التسجيل:* \`${userData.join_date}\`\n📊 *الطلبات:* \`${userData.requests_count}\` طلب\n🧠 *الذاكرة:* Gemini نشطة 🟢\n\n🔑 *الـ API:* \`${userData.api_key}\``;
             await sock.sendMessage(from, { text: profile });
             return;
         }
@@ -279,15 +262,14 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// طلب Pairing Code
 app.post('/pair', async (req, res) => {
     let { number } = req.body;
     if (!number) return res.status(400).json({ error: "أدخل رقم الهاتف شاملاً مفتاح الدولة" });
     number = number.replace(/[^0-9]/g, '');
 
     try {
-        if (!sock) return res.status(500).json({ error: "البوت قيد التشغيل، انتظر لحظة وأعد المحاولة" });
-        if (sock.authState.creds.registered) return res.json({ status: "already_registered", message: "البوت مسجل ومتصل بالواتساب بالفعل!" });
+        if (!sock) return res.status(500).json({ error: "البوت قيد التشغيل، انتظر لحظة" });
+        if (sock.authState.creds.registered) return res.json({ status: "already_registered", message: "البوت مسجل مسبقاً!" });
 
         await delay(1500);
         const code = await sock.requestPairingCode(number);
@@ -295,8 +277,7 @@ app.post('/pair', async (req, res) => {
 
         return res.json({ status: "success", code: formattedCode });
     } catch (error) {
-        console.error("خطأ في طلب الـ Pairing Code:", error);
-        return res.status(500).json({ error: "حدث خطأ أثناء استخراج الكود. تأكد من صحة الرقم ومفتاح الدولة." });
+        return res.status(500).json({ error: "خطأ في استخراج الكود. تأكد من الرقم." });
     }
 });
 
@@ -312,18 +293,18 @@ app.all("/api/chat", async (req, res) => {
 
     if (prompt.toLowerCase() === "clear" || prompt === "مسح" || prompt === "reset") {
         await clearChatHistory(userId);
-        return res.json({ status: "success", response: "✅ تم مسح ذاكرة المحادثة بنجاح." });
+        return res.json({ status: "success", response: "✅ تم مسح الذاكرة بنجاح." });
     }
 
     const reply = await generateAiResponse(userId, prompt);
     return res.json({ status: "success", developer: "Tarzan VIP", response: reply });
 });
 
-// ================= التشغيل =================
+// ================= BOOTSTRAP =================
 (async () => {
     await initDb();
     await startWhatsAppBot();
     app.listen(PORT, () => {
-        console.log(`🚀 Tarzan AI Official Engine is running on port ${PORT}`);
+        console.log(`🚀 Tarzan AI (Gemini Official) is running on port ${PORT}`);
     });
 })();
