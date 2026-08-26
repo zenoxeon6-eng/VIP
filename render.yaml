@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: tarzan-ai-whatsapp
+    env: docker
+    plan: free
+    region: singapore
+    envVars:
+      - key: PORT
+        value: 22214
+    disk:
+      name: tarzan-db
+      mountPath: /usr/src/app/auth_info_baileys
+      sizeGB: 1
