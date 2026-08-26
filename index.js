@@ -1,3 +1,9 @@
+// تفعيل أداة crypto عالمياً قبل استدعاء المكتبات لحل مشكلة ReferenceError: crypto is not defined
+const crypto = require('crypto');
+if (!global.crypto) {
+    global.crypto = crypto.webcrypto || crypto;
+}
+
 const {
     default: makeWASocket,
     useMultiFileAuthState,
@@ -22,7 +28,6 @@ const SYSTEM_PROMPT = `أنت مساعد ذكاء اصطناعي عبقري وم
 
 let db;
 let sock = null;
-let pairingCodeRequested = false;
 
 // ================= DATABASE INITIALIZATION =================
 async function initDb() {
@@ -174,7 +179,7 @@ async function startWhatsAppBot() {
         printQRInTerminal: false,
         auth: state,
 
-        // 🌟 محاكاة متصفح Windows Desktop لطلب Pair Code بشكل سلييم 100%
+        // محاكاة متصفح Windows Desktop مع Chrome لطلب Pair Code بطلاقة
         browser: ["Windows", "Chrome", "120.0.0.0"],
         
         generateHighQualityLinkPreview: true
@@ -182,12 +187,17 @@ async function startWhatsAppBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', (update) => {
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('🔄 تم قطع الاتصال. إعادة الاتصال:', shouldReconnect);
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 401;
+            
+            console.log(`⚠️ تم إغلاق الاتصال (كود: ${statusCode}). إعادة الاتصال: ${shouldReconnect}`);
+            
             if (shouldReconnect) {
+                // إمهال 5 ثوانٍ قبل التكرار لمنع غرق السجلات في التكرار اللانهائي
+                await delay(5000);
                 startWhatsAppBot();
             }
         } else if (connection === 'open') {
@@ -205,10 +215,8 @@ async function startWhatsAppBot() {
 
         if (!text) return;
 
-        // إنشاء أو جلب المستخدم
         const userData = await getOrCreateUser(from);
 
-        // التعامل مع القائمة والأوامر
         if (text === "الاوامر" || text === "أوامر" || text === "help" || text === "start" || text === "شروع") {
             const menu = `👑 *أهلاً بك في 𝑻𝑨𝑹𝒁𝑨𝑵 𝑨𝑰* 👑\n\n` +
                 `🧠 *تحدث معي مباشرة:* فقط أرسل سؤالك وسأتذكره.\n` +
@@ -246,9 +254,7 @@ async function startWhatsAppBot() {
             return;
         }
 
-        // معالجة الذكاء الاصطناعي
         try {
-            // إرسال حالة "جاري الكتابة..."
             await sock.sendPresenceUpdate('composing', from);
             const reply = await generateAiResponse(from, text);
             await sock.sendMessage(from, { text: reply }, { quoted: msg });
@@ -265,7 +271,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 
-// صفحة الحصول على Pair Code
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -277,7 +282,6 @@ app.post('/pair', async (req, res) => {
         return res.status(400).json({ error: "الرجاء إدخال رقم الهاتف متضمناً مفتاح الدولة" });
     }
 
-    // تنظيف الرقم من أي رموز
     number = number.replace(/[^0-9]/g, '');
 
     try {
@@ -289,11 +293,8 @@ app.post('/pair', async (req, res) => {
             return res.json({ status: "already_registered", message: "البوت مسجل ومتصل بالواتساب بالفعل!" });
         }
 
-        // طلب الـ Pairing Code بمحاكاة متصفح ويندوز
         await delay(1500);
         const code = await sock.requestPairingCode(number);
-        
-        // تنسيق الرمز بشكله المميز XXXX-XXXX
         const formattedCode = code?.match(/.{1,4}/g)?.join("-") || code;
 
         return res.json({ status: "success", code: formattedCode });
@@ -303,7 +304,7 @@ app.post('/pair', async (req, res) => {
     }
 });
 
-// API المطورين كما في كودك الأصلي
+// API المطورين
 app.all("/api/chat", async (req, res) => {
     const apiKey = req.query.api_key || req.body?.api_key;
     const prompt = req.query.prompt || req.body?.prompt;
