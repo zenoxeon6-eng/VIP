@@ -7,7 +7,3 @@ services:
     envVars:
       - key: PORT
         value: 22214
-    disk:
-      name: tarzan-db
-      mountPath: /usr/src/app/auth_info_baileys
-      sizeGB: 1
