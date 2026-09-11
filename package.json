@@ -1,14 +1,11 @@
 {
   "name": "payplus-telegram-miniapp",
-  "version": "2.0.0",
-  "description": "PayPlus - Telegram Crypto Mini App with Admin Control Bot",
+  "version": "3.0.0",
+  "description": "PayPlus - Telegram Mini App with Button-Only Admin Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
-  "keywords": ["telegram", "mini-app", "bot", "crypto", "payplus"],
-  "author": "PayPlus",
-  "license": "MIT",
   "dependencies": {
     "node-telegram-bot-api": "^0.66.0",
     "express": "^4.19.2",
