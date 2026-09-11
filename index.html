@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" class="h-full">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>PayPlus - Telegram Mini App</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Montserrat:wght@600;700;800;900&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: { payBg:'#0f1115', payCard:'#1a1d24', payBorder:'#2a2d35', payGold:'#d4af37' },
+    fontFamily: { cairo:['Cairo','sans-serif'], montserrat:['Montserrat','sans-serif'] }
+  }}
+}
+</script>
+<style>
+body{font-family:'Cairo',sans-serif;background:#000;color:#f3f4f6;user-select:none;-webkit-tap-highlight-color:transparent;overflow:hidden}
+.app-container{width:100%;max-width:440px;height:100dvh;margin:0 auto;position:relative;background:#0f1115;display:flex;flex-direction:column;overflow:hidden}
+@media(min-width:640px){.app-container{height:92vh;max-height:850px;border-radius:40px;box-shadow:0 25px 50px -12px rgba(0,0,0,.8);margin:4vh auto}}
+.user-gold-banner{background:linear-gradient(135deg,#2a2212 0%,#1a150b 45%,#0f0c06 100%);border:1px solid rgba(212,175,55,.3);box-shadow:0 10px 25px rgba(0,0,0,.5),inset 0 1px 1px rgba(255,235,170,.15)}
+.pay-gold-btn{background:linear-gradient(180deg,#e5c370 0%,#c59b46 100%);color:#1a1505;box-shadow:0 4px 15px rgba(197,155,70,.2),inset 0 1px 0 rgba(255,255,255,.3);transition:all .2s}
+.pay-gold-btn:active{transform:scale(.96)}
+.no-scrollbar::-webkit-scrollbar{display:none}
+.no-scrollbar{-ms-overflow-style:none;scrollbar-width:none}
+.nav-btn.active{color:#d4af37}
+.nav-btn.active .nav-icon-bg{background:rgba(212,175,55,.1)}
+.lang-item.active{background:rgba(212,175,55,.15);border-color:#d4af37;color:#d4af37}
+</style>
+</head>
+<body class="flex items-center justify-center min-h-screen">
+
+<div class="app-container">
+  <!-- HEADER -->
+  <header class="pt-4 px-5 pb-3 flex items-center justify-between z-30 shrink-0">
+    <div class="flex items-center gap-2">
+      <button onclick="toggleLangModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1a1d24] border border-[#2a2d35] text-[11px] font-bold text-gray-300 active:scale-95">
+        <i class="fa-solid fa-globe text-amber-500 text-xs"></i>
+        <span id="currentLangText">العربية</span>
+      </button>
+      <button onclick="openSupportModal()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#1a1d24] border border-[#2a2d35] text-[11px] font-bold text-gray-300 active:scale-95">
+        <i class="fa-regular fa-comments text-amber-500 text-xs"></i>
+        <span id="supportBtnText">الدعم</span>
+      </button>
+    </div>
+    <div class="flex items-center gap-0.5">
+      <span class="text-xl font-black text-white font-montserrat">PayPlu</span>
+      <span class="text-xl font-black text-amber-500 font-montserrat">$</span>
+    </div>
+  </header>
+
+  <!-- USER BANNER -->
+  <div class="px-4 pt-2 pb-1 shrink-0">
+    <div class="user-gold-banner rounded-3xl p-4 relative overflow-hidden">
+      <div class="flex justify-between items-start mb-3">
+        <div class="flex items-center gap-3">
+          <div class="relative">
+            <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-600 via-yellow-400 to-amber-300 p-[2px]">
+              <div class="w-full h-full rounded-[14px] bg-[#111318] flex items-center justify-center font-extrabold text-amber-400 text-sm font-montserrat" id="userAvatar">?</div>
+            </div>
+            <span class="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-[#1a150b] rounded-full"></span>
+          </div>
+          <div>
+            <div class="flex items-center gap-1.5">
+              <h2 class="text-sm font-black text-white" id="userName">User</h2>
+              <span class="bg-amber-500/20 text-amber-400 text-[9px] font-black px-1.5 py-0.5 rounded-md border border-amber-500/30">VIP</span>
+            </div>
+            <p class="text-[10px] text-gray-400 font-mono mt-0.5" id="userId">ID: ---</p>
+          </div>
+        </div>
+        <div class="text-left">
+          <span class="text-[10px] text-gray-400 font-semibold block" id="balanceLabel">الرصيد الإجمالي</span>
+          <div class="text-2xl font-black text-amber-400 mt-1 font-montserrat" id="userBalanceDisplay">$0.00</div>
+          <span class="text-[9px] text-emerald-400 font-bold mt-1 flex items-center gap-1 justify-end">
+            <i class="fa-solid fa-circle-check text-[8px]"></i>
+            <span id="availableLabel">متاح للسحب</span>
+          </span>
+        </div>
+      </div>
+      <div class="pt-3 border-t border-amber-500/10 flex items-center justify-around text-[10px] text-gray-300 font-bold">
+        <div class="flex items-center gap-1.5"><i class="fa-solid fa-play text-amber-500"></i><span id="badgeAds">إعلانات</span></div>
+        <span class="text-amber-500/30">•</span>
+        <div class="flex items-center gap-1.5"><i class="fa-solid fa-check-double text-amber-500"></i><span id="badgeTasks">مهام</span></div>
+        <span class="text-amber-500/30">•</span>
+        <div class="flex items-center gap-1.5"><i class="fa-solid fa-user-group text-amber-500"></i><span id="badgeFriends">أصدقاء</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <main class="flex-1 overflow-y-auto no-scrollbar p-4 pb-28 space-y-4" id="mainContent">
+
+    <!-- TAB: ADS -->
+    <section id="tab-ads" class="tab-content space-y-4">
+      <div class="text-right px-1">
+        <h3 class="text-base font-black text-white" id="adsTitle">شاهد واكسب</h3>
+        <p class="text-xs text-gray-400 mt-1" id="adsSubtitle">شاهد إعلان واكسب $0.50 فوراً</p>
+      </div>
+      <div id="adsList" class="space-y-3"></div>
+      <div class="bg-[#1a1d24] rounded-3xl p-4 border border-[#2a2d35]">
+        <div class="flex justify-between items-center text-[11px] text-gray-400 font-bold mb-2">
+          <span id="progressLabel">التقدم اليومي</span>
+          <span><strong id="adsWatchedToday" class="text-amber-400">0</strong> / <span id="dailyLimit">5</span></span>
+        </div>
+        <div class="w-full h-2.5 bg-[#0f1115] rounded-full overflow-hidden border border-[#2a2d35]">
+          <div id="adsProgressBar" class="h-full bg-gradient-to-r from-amber-600 to-yellow-400 rounded-full transition-all duration-500" style="width:0%"></div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-[#1a1d24] rounded-2xl p-4 text-center border border-[#2a2d35]">
+          <span class="text-[10px] text-gray-400 font-bold block" id="totalWatchedLabel">إجمالي المشاهدات</span>
+          <div class="text-xl font-black text-white mt-1"><span id="totalAdsCount">0</span></div>
+        </div>
+        <div class="bg-[#1a1d24] rounded-2xl p-4 text-center border border-[#2a2d35]">
+          <span class="text-[10px] text-gray-400 font-bold block" id="totalEarnedLabel">أرباح الإعلانات</span>
+          <div class="text-xl font-black text-amber-400 mt-1">$<span id="totalAdsEarnings">0.00</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: TASKS -->
+    <section id="tab-tasks" class="tab-content hidden space-y-4">
+      <div class="flex items-center gap-2.5 px-1">
+        <div class="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center border border-amber-500/20">
+          <i class="fa-solid fa-list-check"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-black text-white" id="tasksTitle">المهام اليومية</h3>
+          <p class="text-[10px] text-gray-400" id="tasksSubtitle">أكمل المهام لزيادة رصيدك</p>
+        </div>
+      </div>
+      <div id="tasksList" class="space-y-3"></div>
+    </section>
+
+    <!-- TAB: REFERRAL -->
+    <section id="tab-referral" class="tab-content hidden space-y-4">
+      <div class="bg-[#1a1d24] rounded-3xl p-5 space-y-5 border border-[#2a2d35]">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-base font-black text-white" id="refTitle">ادع الأصدقاء</h3>
+            <p class="text-xs text-amber-400 font-bold mt-1" id="refSubtitle">مكافأة: $0.75 لكل صديق</p>
+          </div>
+          <div class="w-12 h-12 rounded-2xl bg-[#0f1115] text-amber-500 flex items-center justify-center text-2xl border border-[#2a2d35]">
+            <i class="fa-solid fa-user-plus"></i>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <label class="text-[11px] text-gray-400 font-bold block" id="refLinkLabel">رابط الدعوة الخاص بك</label>
+          <div class="relative">
+            <input type="text" id="refLinkInput" readonly class="w-full bg-[#0f1115] border border-[#2a2d35] rounded-2xl px-4 py-3.5 text-xs text-white font-mono dir-ltr text-left">
+            <button onclick="copyRefLink()" class="absolute left-2 top-1/2 -translate-y-1/2 bg-[#2a2d35] px-3.5 py-1.5 rounded-xl text-xs font-bold text-white flex items-center gap-1.5">
+              <i class="fa-regular fa-copy"></i><span id="copyBtnText">نسخ</span>
+            </button>
+          </div>
+        </div>
+        <button onclick="shareWithFriends()" class="w-full pay-gold-btn py-3.5 rounded-2xl font-black text-xs flex items-center justify-center gap-2">
+          <span id="shareBtnText">مشاركة مباشرة</span>
+          <i class="fa-brands fa-telegram text-lg"></i>
+        </button>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="bg-[#1a1d24] rounded-2xl p-4 text-center border border-[#2a2d35]">
+          <span class="text-[10px] text-gray-400 font-bold block" id="invitedLabel">الأصدقاء المدعوون</span>
+          <div class="text-xl font-black text-white mt-1" id="invitedCount">0</div>
+        </div>
+        <div class="bg-[#1a1d24] rounded-2xl p-4 text-center border border-[#2a2d35]">
+          <span class="text-[10px] text-gray-400 font-bold block" id="inviteEarningsLabel">أرباح الدعوات</span>
+          <div class="text-xl font-black text-amber-400 mt-1">$<span id="inviteEarnings">0.00</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: WITHDRAW -->
+    <section id="tab-withdraw" class="tab-content hidden space-y-4">
+      <div class="bg-[#1a1d24] rounded-3xl p-5 space-y-5 border border-[#2a2d35]">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center border border-amber-500/20">
+            <i class="fa-solid fa-wallet"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-black text-white" id="withdrawTitle">سحب الأرباح</h3>
+            <p class="text-[10px] text-gray-400" id="withdrawSubtitle">اختر طريقة الدفع</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2.5">
+          <button type="button" onclick="selectPaymentMethod('USDT')" id="method-USDT" class="payment-method-btn border-2 border-amber-500 bg-[#22262f] p-3 rounded-2xl flex flex-col items-center gap-2 transition">
+            <div class="w-10 h-10 rounded-full bg-[#0f1115] border border-[#2a2d35] text-emerald-400 flex items-center justify-center font-bold"><i class="fa-solid fa-t"></i></div>
+            <span class="text-[9px] font-black text-white">USDT</span>
+          </button>
+          <button type="button" onclick="selectPaymentMethod('Binance')" id="method-Binance" class="payment-method-btn border border-[#2a2d35] bg-[#0f1115] p-3 rounded-2xl flex flex-col items-center gap-2">
+            <div class="w-10 h-10 rounded-full bg-[#0f1115] border border-[#2a2d35] text-amber-400 flex items-center justify-center font-bold"><i class="fa-solid fa-coins"></i></div>
+            <span class="text-[9px] font-black text-gray-400">Binance</span>
+          </button>
+          <button type="button" onclick="selectPaymentMethod('PayPal')" id="method-PayPal" class="payment-method-btn border border-[#2a2d35] bg-[#0f1115] p-3 rounded-2xl flex flex-col items-center gap-2">
+            <div class="w-10 h-10 rounded-full bg-[#0f1115] border border-[#2a2d35] text-blue-400 flex items-center justify-center font-bold"><i class="fa-brands fa-paypal"></i></div>
+            <span class="text-[9px] font-black text-gray-400">PayPal</span>
+          </button>
+        </div>
+        <form id="withdrawForm" onsubmit="handleWithdrawSubmit(event)" class="space-y-4">
+          <div class="space-y-1.5">
+            <div class="flex justify-between items-center px-1">
+              <label class="text-[11px] text-gray-400 font-bold" id="amountLabel">المبلغ ($)</label>
+              <button type="button" onclick="setMaxWithdrawAmount()" class="text-[10px] font-black text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded" id="maxBtn">الحد الأقصى</button>
+            </div>
+            <input type="number" id="withdrawAmount" step="0.01" min="10" required class="w-full bg-[#0f1115] border border-[#2a2d35] rounded-2xl px-4 py-3.5 text-sm text-white font-bold focus:outline-none focus:border-amber-500 font-montserrat" placeholder="10.00">
+            <p class="text-[10px] text-gray-400 font-bold flex justify-between px-1">
+              <span id="availLabel">الرصيد المتاح: $<strong id="availWithdrawBal" class="text-white">0.00</strong></span>
+              <span class="text-amber-500" id="minLabel">الحد الأدنى $10</span>
+            </p>
+          </div>
+          <div class="space-y-1.5">
+            <label id="walletLabel" class="text-[11px] text-gray-400 font-bold block px-1">عنوان المحفظة</label>
+            <input type="text" id="walletAddress" required class="w-full bg-[#0f1115] border border-[#2a2d35] rounded-2xl px-4 py-3.5 text-sm text-white font-bold focus:outline-none focus:border-amber-500 dir-ltr text-left font-mono">
+            <p id="walletSubtext" class="text-[10px] text-gray-500 px-1">أدخل عنوان محفظتك</p>
+          </div>
+          <button type="submit" class="w-full pay-gold-btn py-3.5 rounded-2xl font-black text-sm flex items-center justify-center gap-2" id="submitWithdrawBtn">
+            <i class="fa-solid fa-arrow-up-from-bracket"></i>
+            <span>تأكيد السحب</span>
+          </button>
+        </form>
+      </div>
+      <div class="space-y-3">
+        <h4 class="text-xs font-black text-gray-400 px-2" id="historyLabel">سجل السحوبات</h4>
+        <div id="withdrawHistoryList" class="space-y-2.5"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- NAV -->
+  <nav class="absolute bottom-0 left-0 right-0 bg-[#0f1115]/90 backdrop-blur-xl border-t border-[#2a2d35] px-2 py-2 z-40 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <div class="grid grid-cols-4 gap-1 text-center">
+      <button onclick="switchTab('ads')" id="nav-ads" class="nav-btn active flex flex-col items-center py-1.5 rounded-2xl text-gray-500">
+        <div class="nav-icon-bg w-8 h-8 rounded-full flex items-center justify-center text-lg"><i class="fa-solid fa-play"></i></div>
+        <span class="text-[10px] font-black mt-1" id="navAdsText">شاهد</span>
+      </button>
+      <button onclick="switchTab('tasks')" id="nav-tasks" class="nav-btn flex flex-col items-center py-1.5 rounded-2xl text-gray-500">
+        <div class="nav-icon-bg w-8 h-8 rounded-full flex items-center justify-center text-lg"><i class="fa-solid fa-list-check"></i></div>
+        <span class="text-[10px] font-black mt-1" id="navTasksText">المهام</span>
+      </button>
+      <button onclick="switchTab('referral')" id="nav-referral" class="nav-btn flex flex-col items-center py-1.5 rounded-2xl text-gray-500">
+        <div class="nav-icon-bg w-8 h-8 rounded-full flex items-center justify-center text-lg"><i class="fa-solid fa-user-group"></i></div>
+        <span class="text-[10px] font-black mt-1" id="navRefText">دعوة</span>
+      </button>
+      <button onclick="switchTab('withdraw')" id="nav-withdraw" class="nav-btn flex flex-col items-center py-1.5 rounded-2xl text-gray-500">
+        <div class="nav-icon-bg w-8 h-8 rounded-full flex items-center justify-center text-lg"><i class="fa-solid fa-wallet"></i></div>
+        <span class="text-[10px] font-black mt-1" id="navWithdrawText">سحب</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- VIDEO MODAL -->
+  <div id="videoModal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+    <div class="w-full max-w-xs bg-[#1a1d24] rounded-3xl p-6 text-center space-y-5 border border-[#2a2d35] relative overflow-hidden">
+      <div class="absolute top-0 left-0 w-full h-1 bg-[#2a2d35]">
+        <div id="videoProgress" class="h-full bg-amber-500 transition-all duration-1000" style="width:0%"></div>
+      </div>
+      <div class="w-16 h-16 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center text-3xl mx-auto border border-amber-500/20">
+        <i class="fa-solid fa-play animate-pulse"></i>
+      </div>
+      <div>
+        <h4 class="font-black text-sm text-white" id="videoTitle">جاري عرض الإعلان...</h4>
+        <p class="text-xs text-gray-400 mt-1.5" id="videoSubtitle">الرجاء الانتظار</p>
+      </div>
+      <div id="videoTimer" class="text-5xl font-black text-amber-500 font-montserrat py-2">5</div>
+    </div>
+  </div>
+
+  <!-- SUPPORT MODAL -->
+  <div id="supportModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="w-full max-w-xs bg-[#1a1d24] rounded-3xl p-6 text-center space-y-5 border border-[#2a2d35]">
+      <div class="w-14 h-14 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center text-2xl mx-auto">
+        <i class="fa-regular fa-comments"></i>
+      </div>
+      <div>
+        <h4 class="font-black text-sm text-white" id="supportTitle">الدعم الفني</h4>
+        <p class="text-xs text-gray-400 mt-1.5" id="supportDesc">فريق الدعم متاح لمساعدتك</p>
+        <p class="text-sm font-black text-amber-400 mt-2">@no_vi1</p>
+      </div>
+      <a href="https://t.me/no_vi1" target="_blank" class="w-full bg-[#2a2d35] text-white py-3.5 rounded-2xl font-black text-sm flex items-center justify-center gap-2">
+        <i class="fa-brands fa-telegram text-blue-400 text-lg"></i>
+        <span id="supportBtn">تواصل معنا</span>
+      </a>
+      <button onclick="closeSupportModal()" class="text-xs font-bold text-gray-500 hover:text-white w-full" id="closeBtn">إغلاق</button>
+    </div>
+  </div>
+
+  <!-- LANG MODAL -->
+  <div id="langModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="w-full max-w-xs bg-[#1a1d24] rounded-3xl p-5 space-y-3 border border-[#2a2d35]">
+      <div class="text-center pb-2 border-b border-[#2a2d35]">
+        <h4 class="font-black text-sm text-white" id="langTitle">اختر اللغة</h4>
+      </div>
+      <div id="langList" class="space-y-2">
+        <button onclick="setLanguage('ar')" data-lang="ar" class="lang-item w-full flex items-center gap-3 p-3 rounded-2xl border border-[#2a2d35] bg-[#0f1115] hover:bg-[#22262f] text-sm font-bold text-gray-300">
+          <span class="text-xl">🇸🇦</span><span>العربية</span>
+        </button>
+        <button onclick="setLanguage('en')" data-lang="en" class="lang-item w-full flex items-center gap-3 p-3 rounded-2xl border border-[#2a2d35] bg-[#0f1115] hover:bg-[#22262f] text-sm font-bold text-gray-300">
+          <span class="text-xl">🇬🇧</span><span>English</span>
+        </button>
+        <button onclick="setLanguage('fr')" data-lang="fr" class="lang-item w-full flex items-center gap-3 p-3 rounded-2xl border border-[#2a2d35] bg-[#0f1115] hover:bg-[#22262f] text-sm font-bold text-gray-300">
+          <span class="text-xl">🇫🇷</span><span>Français</span>
+        </button>
+        <button onclick="setLanguage('es')" data-lang="es" class="lang-item w-full flex items-center gap-3 p-3 rounded-2xl border border-[#2a2d35] bg-[#0f1115] hover:bg-[#22262f] text-sm font-bold text-gray-300">
+          <span class="text-xl">🇪🇸</span><span>Español</span>
+        </button>
+        <button onclick="setLanguage('tr')" data-lang="tr" class="lang-item w-full flex items-center gap-3 p-3 rounded-2xl border border-[#2a2d35] bg-[#0f1115] hover:bg-[#22262f] text-sm font-bold text-gray-300">
+          <span class="text-xl">🇹🇷</span><span>Türkçe</span>
+        </button>
+        <button onclick="setLanguage('ru')" data-lang="ru" class="lang-item w-full flex items-center gap-3 p-3 rounded-2xl border border-[#2a2d35] bg-[#0f1115] hover:bg-[#22262f] text-sm font-bold text-gray-300">
+          <span class="text-xl">🇷🇺</span><span>Русский</span>
+        </button>
+      </div>
+      <button onclick="closeLangModal()" class="w-full text-xs font-bold text-gray-500 py-2" id="langClose">إغلاق</button>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast" class="absolute top-16 left-1/2 -translate-x-1/2 z-[60] transition-all duration-300 opacity-0 pointer-events-none -translate-y-4">
+    <div class="bg-[#22262f] text-white px-4 py-3 rounded-2xl border border-[#3a3e4a] shadow-2xl flex items-center gap-2.5 text-xs font-bold">
+      <i id="toastIcon" class="fa-solid fa-circle-check text-amber-400 text-base"></i>
+      <span id="toastMsg">تم!</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ============ TRANSLATIONS ============
+const translations = {
+  ar: {
+    dir: 'rtl', langName: 'العربية',
+    balanceLabel: 'الرصيد الإجمالي', availableLabel: 'متاح للسحب', badgeAds: 'إعلانات', badgeTasks: 'مهام', badgeFriends: 'أصدقاء',
+    navAds: 'شاهد', navTasks: 'المهام', navRef: 'دعوة', navWithdraw: 'سحب',
+    adsTitle: 'شاهد واكسب', adsSubtitle: 'شاهد إعلان واكسب $0.50 فوراً',
+    progressLabel: 'التقدم اليومي', totalWatchedLabel: 'إجمالي المشاهدات', totalEarnedLabel: 'أرباح الإعلانات',
+    tasksTitle: 'المهام اليومية', tasksSubtitle: 'أكمل المهام لزيادة رصيدك',
+    refTitle: 'ادع الأصدقاء', refSubtitle: 'مكافأة: $0.75 لكل صديق', refLinkLabel: 'رابط الدعوة',
+    copyBtnText: 'نسخ', shareBtnText: 'مشاركة مباشرة', invitedLabel: 'الأصدقاء', inviteEarningsLabel: 'أرباح الدعوات',
+    withdrawTitle: 'سحب الأرباح', withdrawSubtitle: 'اختر طريقة الدفع', amountLabel: 'المبلغ ($)',
+    maxBtn: 'الحد الأقصى', availLabel: 'الرصيد المتاح', minLabel: 'الحد الأدنى $10',
+    walletLabel: 'عنوان المحفظة', walletSubtext: 'أدخل عنوان محفظتك', submitWithdrawBtn: 'تأكيد السحب', historyLabel: 'سجل السحوبات',
+    supportTitle: 'الدعم الفني', supportDesc: 'فريق الدعم متاح', supportBtn: 'تواصل معنا', closeBtn: 'إغلاق',
+    langTitle: 'اختر اللغة', langClose: 'إغلاق',
+    watchNow: 'شاهد الآن', complete: 'مكتمل', alreadyDone: 'أكملت هذه المهمة',
+    videoTitle: 'جاري عرض الإعلان...', videoSubtitle: 'الرجاء الانتظار',
+    successAd: 'تم كسب +$0.50!', successTask: 'تمت المهمة!', successWithdraw: 'تم إرسال طلب السحب!',
+    noHistory: 'لا توجد عمليات سحب', supportBtnText: 'الدعم'
+  },
+  en: {
+    dir: 'ltr', langName: 'English',
+    balanceLabel: 'Total Balance', availableLabel: 'Available', badgeAds: 'Ads', badgeTasks: 'Tasks', badgeFriends: 'Friends',
+    navAds: 'Watch', navTasks: 'Tasks', navRef: 'Invite', navWithdraw: 'Withdraw',
+    adsTitle: 'Watch & Earn', adsSubtitle: 'Watch an ad and earn $0.50 instantly',
+    progressLabel: 'Daily Progress', totalWatchedLabel: 'Total Watched', totalEarnedLabel: 'Ad Earnings',
+    tasksTitle: 'Daily Tasks', tasksSubtitle: 'Complete tasks to boost your balance',
+    refTitle: 'Invite Friends', refSubtitle: 'Reward: $0.75 per friend', refLinkLabel: 'Your invite link',
+    copyBtnText: 'Copy', shareBtnText: 'Share on Telegram', invitedLabel: 'Invited', inviteEarningsLabel: 'Invite Earnings',
+    withdrawTitle: 'Withdraw', withdrawSubtitle: 'Choose payment method', amountLabel: 'Amount ($)',
+    maxBtn: 'Max', availLabel: 'Available', minLabel: 'Min $10',
+    walletLabel: 'Wallet Address', walletSubtext: 'Enter your wallet', submitWithdrawBtn: 'Confirm Withdraw', historyLabel: 'History',
+    supportTitle: 'Support', supportDesc: 'Our team is here', supportBtn: 'Contact Us', closeBtn: 'Close',
+    langTitle: 'Select Language', langClose: 'Close',
+    watchNow: 'Watch Now', complete: 'Completed', alreadyDone: 'Already done',
+    videoTitle: 'Playing Ad...', videoSubtitle: 'Please wait',
+    successAd: 'Earned +$0.50!', successTask: 'Task done!', successWithdraw: 'Request sent!',
+    noHistory: 'No withdrawals yet', supportBtnText: 'Support'
+  },
+  fr: {
+    dir: 'ltr', langName: 'Français',
+    balanceLabel: 'Solde Total', availableLabel: 'Disponible', badgeAds: 'Pubs', badgeTasks: 'Tâches', badgeFriends: 'Amis',
+    navAds: 'Voir', navTasks: 'Tâches', navRef: 'Inviter', navWithdraw: 'Retirer',
+    adsTitle: 'Regarder & Gagner', adsSubtitle: 'Regardez une pub et gagnez 0,50$',
+    progressLabel: 'Progression', totalWatchedLabel: 'Total vues', totalEarnedLabel: 'Gains pub',
+    tasksTitle: 'Tâches Quotidiennes', tasksSubtitle: 'Complétez les tâches',
+    refTitle: 'Inviter des Amis', refSubtitle: 'Récompense: 0,75$ par ami', refLinkLabel: 'Votre lien',
+    copyBtnText: 'Copier', shareBtnText: 'Partager', invitedLabel: 'Invités', inviteEarningsLabel: 'Gains invitations',
+    withdrawTitle: 'Retirer', withdrawSubtitle: 'Choisir paiement', amountLabel: 'Montant ($)',
+    maxBtn: 'Max', availLabel: 'Disponible', minLabel: 'Min 10$',
+    walletLabel: 'Adresse Wallet', walletSubtext: 'Entrez votre adresse', submitWithdrawBtn: 'Confirmer', historyLabel: 'Historique',
+    supportTitle: 'Support', supportDesc: 'Notre équipe est là', supportBtn: 'Contact', closeBtn: 'Fermer',
+    langTitle: 'Choisir la Langue', langClose: 'Fermer',
+    watchNow: 'Regarder', complete: 'Terminé', alreadyDone: 'Déjà fait',
+    videoTitle: 'Lecture...', videoSubtitle: 'Patientez',
+    successAd: '+0,50$ gagnés!', successTask: 'Tâche finie!', successWithdraw: 'Demande envoyée!',
+    noHistory: 'Aucun retrait', supportBtnText: 'Support'
+  },
+  es: {
+    dir: 'ltr', langName: 'Español',
+    balanceLabel: 'Saldo Total', availableLabel: 'Disponible', badgeAds: 'Anuncios', badgeTasks: 'Tareas', badgeFriends: 'Amigos',
+    navAds: 'Ver', navTasks: 'Tareas', navRef: 'Invitar', navWithdraw: 'Retirar',
+    adsTitle: 'Ver y Ganar', adsSubtitle: 'Mira un anuncio y gana $0.50',
+    progressLabel: 'Progreso Diario', totalWatchedLabel: 'Total Vistos', totalEarnedLabel: 'Ganancias',
+    tasksTitle: 'Tareas Diarias', tasksSubtitle: 'Completa tareas',
+    refTitle: 'Invita Amigos', refSubtitle: 'Recompensa: $0.75 por amigo', refLinkLabel: 'Tu enlace',
+    copyBtnText: 'Copiar', shareBtnText: 'Compartir', invitedLabel: 'Invitados', inviteEarningsLabel: 'Ganancias',
+    withdrawTitle: 'Retirar', withdrawSubtitle: 'Elige método', amountLabel: 'Monto ($)',
+    maxBtn: 'Máx', availLabel: 'Disponible', minLabel: 'Mín $10',
+    walletLabel: 'Dirección Wallet', walletSubtext: 'Ingresa tu dirección', submitWithdrawBtn: 'Confirmar', historyLabel: 'Historial',
+    supportTitle: 'Soporte', supportDesc: 'Estamos aquí', supportBtn: 'Contactar', closeBtn: 'Cerrar',
+    langTitle: 'Idioma', langClose: 'Cerrar',
+    watchNow: 'Ver Ahora', complete: 'Completado', alreadyDone: 'Ya hecho',
+    videoTitle: 'Reproduciendo...', videoSubtitle: 'Espera',
+    successAd: '¡+$0.50!', successTask: '¡Tarea hecha!', successWithdraw: '¡Solicitud enviada!',
+    noHistory: 'Sin retiros', supportBtnText: 'Soporte'
+  },
+  tr: {
+    dir: 'ltr', langName: 'Türkçe',
+    balanceLabel: 'Toplam Bakiye', availableLabel: 'Kullanılabilir', badgeAds: 'Reklam', badgeTasks: 'Görev', badgeFriends: 'Arkadaş',
+    navAds: 'İzle', navTasks: 'Görevler', navRef: 'Davet', navWithdraw: 'Çek',
+    adsTitle: 'İzle & Kazan', adsSubtitle: 'Reklam izle $0.50 kazan',
+    progressLabel: 'Günlük İlerleme', totalWatchedLabel: 'Toplam', totalEarnedLabel: 'Kazanç',
+    tasksTitle: 'Günlük Görevler', tasksSubtitle: 'Görevleri tamamla',
+    refTitle: 'Arkadaş Davet', refSubtitle: 'Ödül: arkadaş başı $0.75', refLinkLabel: 'Davet linkin',
+    copyBtnText: 'Kopyala', shareBtnText: 'Paylaş', invitedLabel: 'Davetli', inviteEarningsLabel: 'Kazanç',
+    withdrawTitle: 'Para Çek', withdrawSubtitle: 'Ödeme seç', amountLabel: 'Miktar ($)',
+    maxBtn: 'Max', availLabel: 'Kullanılabilir', minLabel: 'Min $10',
+    walletLabel: 'Cüzdan Adresi', walletSubtext: 'Adresini gir', submitWithdrawBtn: 'Onayla', historyLabel: 'Geçmiş',
+    supportTitle: 'Destek', supportDesc: 'Buradayız', supportBtn: 'İletişim', closeBtn: 'Kapat',
+    langTitle: 'Dil Seç', langClose: 'Kapat',
+    watchNow: 'Şimdi İzle', complete: 'Tamam', alreadyDone: 'Zaten yapıldı',
+    videoTitle: 'Oynatılıyor...', videoSubtitle: 'Bekle',
+    successAd: '+$0.50!', successTask: 'Görev tamam!', successWithdraw: 'Talep gönderildi!',
+    noHistory: 'Geçmiş yok', supportBtnText: 'Destek'
+  },
+  ru: {
+    dir: 'ltr', langName: 'Русский',
+    balanceLabel: 'Общий Баланс', availableLabel: 'Доступно', badgeAds: 'Реклама', badgeTasks: 'Задания', badgeFriends: 'Друзья',
+    navAds: 'Смотреть', navTasks: 'Задания', navRef: 'Пригласить', navWithdraw: 'Вывести',
+    adsTitle: 'Смотри и Зарабатывай', adsSubtitle: 'Смотри рекламу и получай $0.50',
+    progressLabel: 'Дневной Прогресс', totalWatchedLabel: 'Всего', totalEarnedLabel: 'Заработано',
+    tasksTitle: 'Ежедневные Задания', tasksSubtitle: 'Выполняй задания',
+    refTitle: 'Пригласи Друзей', refSubtitle: 'Награда: $0.75 за друга', refLinkLabel: 'Ваша ссылка',
+    copyBtnText: 'Копировать', shareBtnText: 'Поделиться', invitedLabel: 'Приглашено', inviteEarningsLabel: 'Заработок',
+    withdrawTitle: 'Вывод', withdrawSubtitle: 'Выберите способ', amountLabel: 'Сумма ($)',
+    maxBtn: 'Макс', availLabel: 'Доступно', minLabel: 'Мин $10',
+    walletLabel: 'Адрес Кошелька', walletSubtext: 'Введите адрес', submitWithdrawBtn: 'Подтвердить', historyLabel: 'История',
+    supportTitle: 'Поддержка', supportDesc: 'Мы здесь', supportBtn: 'Связаться', closeBtn: 'Закрыть',
+    langTitle: 'Язык', langClose: 'Закрыть',
+    watchNow: 'Смотреть', complete: 'Готово', alreadyDone: 'Уже сделано',
+    videoTitle: 'Воспроизведение...', videoSubtitle: 'Подождите',
+    successAd: '+$0.50!', successTask: 'Задание готово!', successWithdraw: 'Запрос отправлен!',
+    noHistory: 'Нет выводов', supportBtnText: 'Поддержка'
+  }
+};
+
+// ============ STATE ============
+let currentLang = localStorage.getItem('payplus_lang') || 'ar';
+let state = {
+  user: { id: null, balance: 0, adsWatchedToday: 0, totalAdsWatched: 0, completedTasks: [], invitedFriends: 0, inviteEarnings: 0, totalEarned: 0 },
+  ads: [], tasks: [],
+  config: { adReward: 0.5, dailyLimit: 5, minWithdraw: 10, referralReward: 0.75, botUsername: 'Pay_Plus_Bot' },
+  selectedMethod: 'USDT',
+  withdrawHistory: []
+};
+let tg = window.Telegram?.WebApp;
+let currentAdId = null;
+
+// ============ INIT ============
+document.addEventListener('DOMContentLoaded', async () => {
+  if (tg) { tg.ready(); tg.expand(); if (tg.setHeaderColor) tg.setHeaderColor('#0f1115'); }
+  applyLanguage(currentLang);
+  await loadUserData();
+  renderAll();
+});
+
+async function loadUserData() {
+  const initData = tg?.initData || '';
+  const tgUser = tg?.initDataUnsafe?.user;
+  const body = { initData, userId: tgUser?.id };
+
+  try {
+    const res = await fetch('/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (data.success) {
+      state.user = { ...state.user, ...data.user };
+      state.ads = data.ads;
+      state.tasks = data.tasks;
+      state.config = { ...state.config, ...data.config };
+      if (tgUser) {
+        state.user.name = `${tgUser.first_name || ''} ${tgUser.last_name || ''}`.trim() || 'User';
+        state.user.username = tgUser.username;
+        document.getElementById('userName').textContent = state.user.name;
+        document.getElementById('userAvatar').textContent = (tgUser.first_name?.[0] || 'U').toUpperCase();
+        document.getElementById('userId').textContent = 'ID: ' + tgUser.id;
+      }
+      await loadWithdrawHistory();
+    }
+  } catch (e) { console.error('Load error:', e); }
+}
+
+async function loadWithdrawHistory() {
+  if (!state.user.id) return;
+  try {
+    const res = await fetch(`/api/withdrawals/${state.user.id}`);
+    const data = await res.json();
+    if (data.success) state.withdrawHistory = data.withdrawals;
+  } catch (e) {}
+}
+
+// ============ RENDER ============
+function renderAll() {
+  const t = translations[currentLang];
+  const bal = (state.user.balance || 0).toFixed(2);
+  document.getElementById('userBalanceDisplay').textContent = '$' + bal;
+  document.getElementById('availWithdrawBal').textContent = bal;
+  document.getElementById('adsWatchedToday').textContent = state.user.adsWatchedToday || 0;
+  document.getElementById('dailyLimit').textContent = state.config.dailyLimit;
+  document.getElementById('totalAdsCount').textContent = state.user.totalAdsWatched || 0;
+  document.getElementById('totalAdsEarnings').textContent = (state.user.totalEarned || 0).toFixed(2);
+  document.getElementById('invitedCount').textContent = state.user.invitedFriends || 0;
+  document.getElementById('inviteEarnings').textContent = (state.user.inviteEarnings || 0).toFixed(2);
+  document.getElementById('adsProgressBar').style.width = Math.min(100, ((state.user.adsWatchedToday / state.config.dailyLimit) * 100)) + '%';
+  
+  const refLink = `https://t.me/${state.config.botUsername}/app?startapp=${state.user.id || ''}`;
+  document.getElementById('refLinkInput').value = refLink;
+
+  renderAds();
+  renderTasks();
+  renderWithdrawHistory();
+}
+
+function renderAds() {
+  const t = translations[currentLang];
+  const container = document.getElementById('adsList');
+  const activeAds = state.ads.filter(a => a.active);
+  const canWatch = state.user.adsWatchedToday < state.config.dailyLimit;
+  
+  if (activeAds.length === 0) {
+    container.innerHTML = `<div class="bg-[#1a1d24] p-6 rounded-2xl border border-[#2a2d35] text-center text-xs text-gray-500">${t.noHistory}</div>`;
+    return;
+  }
+  
+  container.innerHTML = activeAds.map((ad, i) => `
+    <div class="bg-[#1a1d24] rounded-3xl p-4 border border-[#2a2d35] flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-12 h-12 rounded-2xl bg-[#0f1115] border border-[#2a2d35] text-amber-500 flex items-center justify-center text-xl">
+          <i class="fa-solid fa-play"></i>
+        </div>
+        <div>
+          <h4 class="text-sm font-bold text-white">${ad.title}</h4>
+          <span class="text-[11px] text-amber-400 font-bold">+$${ad.reward.toFixed(2)}</span>
+        </div>
+      </div>
+      <button onclick="watchAd(${ad.id})" ${!canWatch ? 'disabled' : ''} class="pay-gold-btn px-4 py-2 rounded-xl text-xs font-black ${!canWatch ? 'opacity-50' : ''}">
+        ${t.watchNow}
+      </button>
+    </div>
+  `).join('');
+}
+
+function renderTasks() {
+  const t = translations[currentLang];
+  const container = document.getElementById('tasksList');
+  const activeTasks = state.tasks.filter(x => x.active);
+  
+  if (activeTasks.length === 0) {
+    container.innerHTML = `<div class="bg-[#1a1d24] p-6 rounded-2xl border border-[#2a2d35] text-center text-xs text-gray-500">${t.noHistory}</div>`;
+    return;
+  }
+  
+  const icons = { channel: 'fa-brands fa-telegram', bot: 'fa-solid fa-robot', youtube: 'fa-brands fa-youtube' };
+  
+  container.innerHTML = activeTasks.map(task => {
+    const done = state.user.completedTasks.includes(task.id);
+    return `
+      <div class="p-4 bg-[#1a1d24] rounded-2xl border border-[#2a2d35] flex items-center justify-between">
+        <div class="flex items-center gap-3.5">
+          <div class="w-11 h-11 rounded-2xl bg-[#0f1115] border border-[#2a2d35] text-amber-500 flex items-center justify-center text-lg">
+            <i class="${icons[task.type] || 'fa-solid fa-tasks'}"></i>
+          </div>
+          <div>
+            <h4 class="text-sm font-bold text-white">${task.title}</h4>
+            <span class="text-[11px] text-amber-400 font-bold">+$${task.reward.toFixed(2)}</span>
+          </div>
+        </div>
+        <button onclick="${done ? '' : `completeTask(${task.id})`}" ${done ? 'disabled' : ''} class="pay-gold-btn px-4 py-2 rounded-xl text-xs font-black ${done ? 'opacity-50 !bg-emerald-600 !text-white' : ''}">
+          ${done ? t.complete : t.watchNow}
+        </button>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderWithdrawHistory() {
+  const t = translations[currentLang];
+  const el = document.getElementById('withdrawHistoryList');
+  if (!state.withdrawHistory || state.withdrawHistory.length === 0) {
+    el.innerHTML = `<div class="bg-[#1a1d24] p-4 rounded-2xl border border-dashed border-[#2a2d35] text-xs text-gray-500 text-center">${t.noHistory}</div>`;
+    return;
+  }
+  el.innerHTML = state.withdrawHistory.map(w => `
+    <div class="bg-[#22262f] p-4 rounded-2xl flex items-center justify-between text-xs border border-[#2a2d35]">
+      <div>
+        <h5 class="font-black text-white">$${w.amount.toFixed(2)} <span class="text-[10px] text-gray-400">(${w.method})</span></h5>
+        <span class="text-[10px] text-gray-500 block mt-0.5">#${w.id}</span>
+      </div>
+      <span class="px-2.5 py-1.5 rounded-lg text-[10px] ${
+        w.status === 'approved' ? 'bg-emerald-500/10 text-emerald-500' :
+        w.status === 'rejected' ? 'bg-red-500/10 text-red-500' :
+        'bg-amber-500/10 text-amber-500'
+      } font-black">${w.status}</span>
+    </div>
+  `).join('');
+}
+
+// ============ ACTIONS ============
+async function watchAd(adId) {
+  if (!state.user.id) return showToast('غير مسجل', 'error');
+  if (state.user.adsWatchedToday >= state.config.dailyLimit) return showToast('وصلت الحد اليومي', 'warning');
+  
+  currentAdId = adId;
+  const modal = document.getElementById('videoModal');
+  const timerEl = document.getElementById('videoTimer');
+  const progressEl = document.getElementById('videoProgress');
+  modal.classList.remove('hidden');
+  
+  let time = 5;
+  timerEl.textContent = time;
+  progressEl.style.width = '0%';
+  
+  const interval = setInterval(async () => {
+    time--;
+    timerEl.textContent = time;
+    progressEl.style.width = ((5 - time) / 5 * 100) + '%';
+    if (time <= 0) {
+      clearInterval(interval);
+      modal.classList.add('hidden');
+      try {
+        const res = await fetch('/api/watch-ad', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: state.user.id, adId })
+        });
+        const data = await res.json();
+        if (data.success) {
+          state.user.balance = data.newBalance;
+          state.user.adsWatchedToday++;
+          state.user.totalAdsWatched++;
+          state.user.totalEarned = (state.user.totalEarned || 0) + data.reward;
+          renderAll();
+          showToast(translations[currentLang].successAd, 'success');
+        } else {
+          showToast(data.error || 'خطأ', 'error');
+        }
+      } catch (e) { showToast('خطأ في الاتصال', 'error'); }
+    }
+  }, 1000);
+}
+
+async function completeTask(taskId) {
+  if (!state.user.id) return;
+  const task = state.tasks.find(x => x.id === taskId);
+  if (!task) return;
+  if (task.url) tg?.openLink ? tg.openLink(task.url) : window.open(task.url, '_blank');
+  
+  try {
+    const res = await fetch('/api/complete-task', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: state.user.id, taskId })
+    });
+    const data = await res.json();
+    if (data.success) {
+      state.user.balance = data.newBalance;
+      state.user.completedTasks.push(taskId);
+      state.user.totalEarned = (state.user.totalEarned || 0) + data.reward;
+      renderAll();
+      showToast(translations[currentLang].successTask, 'success');
+    } else {
+      showToast(data.error === 'already_done' ? translations[currentLang].alreadyDone : 'خطأ', 'warning');
+    }
+  } catch (e) {}
+}
+
+function selectPaymentMethod(method) {
+  state.selectedMethod = method;
+  document.querySelectorAll('.payment-method-btn').forEach(btn => {
+    btn.classList.remove('border-2', 'border-amber-500', 'bg-[#22262f]');
+    btn.classList.add('border', 'border-[#2a2d35]', 'bg-[#0f1115]');
+    const span = btn.querySelector('span');
+    span.classList.remove('text-white');
+    span.classList.add('text-gray-400');
+  });
+  const active = document.getElementById('method-' + method);
+  if (active) {
+    active.classList.add('border-2', 'border-amber-500', 'bg-[#22262f]');
+    const span = active.querySelector('span');
+    span.classList.remove('text-gray-400');
+    span.classList.add('text-white');
+  }
+  const label = document.getElementById('walletLabel');
+  const sub = document.getElementById('walletSubtext');
+  const input = document.getElementById('walletAddress');
+  if (method === 'USDT') {
+    label.textContent = 'USDT TRC20 Address';
+    sub.textContent = 'Enter your USDT TRC20 wallet';
+    input.placeholder = 'TXyz...';
+  } else if (method === 'Binance') {
+    label.textContent = 'Binance ID / Email';
+    sub.textContent = 'Enter your Binance ID';
+    input.placeholder = '123456789';
+  } else {
+    label.textContent = 'PayPal Email';
+    sub.textContent = 'Enter your PayPal email';
+    input.placeholder = 'email@example.com';
+  }
+}
+
+function setMaxWithdrawAmount() {
+  document.getElementById('withdrawAmount').value = state.user.balance.toFixed(2);
+}
+
+async function handleWithdrawSubmit(e) {
+  e.preventDefault();
+  const amount = parseFloat(document.getElementById('withdrawAmount').value);
+  const address = document.getElementById('walletAddress').value.trim();
+  const t = translations[currentLang];
+  
+  if (amount < state.config.minWithdraw) return showToast('الحد الأدنى $' + state.config.minWithdraw, 'error');
+  if (amount > state.user.balance) return showToast('رصيد غير كافٍ', 'error');
+  
+  try {
+    const res = await fetch('/api/withdraw', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: state.user.id, amount, method: state.selectedMethod, address })
+    });
+    const data = await res.json();
+    if (data.success) {
+      state.user.balance -= amount;
+      state.withdrawHistory.unshift({
+        id: data.withdrawalId, amount, method: state.selectedMethod, status: 'pending', date: Date.now()
+      });
+      renderAll();
+      document.getElementById('withdrawForm').reset();
+      showToast(t.successWithdraw, 'success');
+    } else {
+      showToast(data.error || 'خطأ', 'error');
+    }
+  } catch (e) { showToast('خطأ في الاتصال', 'error'); }
+}
+
+// ============ LANGUAGE ============
+function applyLanguage(lang) {
+  const t = translations[lang];
+  currentLang = lang;
+  localStorage.setItem('payplus_lang', lang);
+  document.documentElement.lang = lang;
+  document.documentElement.dir = t.dir;
+  document.getElementById('currentLangText').textContent = t.langName;
+  document.querySelectorAll('.lang-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.lang === lang);
+  });
+  
+  const ids = ['balanceLabel','availableLabel','badgeAds','badgeTasks','badgeFriends','navAdsText','navTasksText','navRefText','navWithdrawText','adsTitle','adsSubtitle','progressLabel','totalWatchedLabel','totalEarnedLabel','tasksTitle','tasksSubtitle','refTitle','refSubtitle','refLinkLabel','copyBtnText','shareBtnText','invitedLabel','inviteEarningsLabel','withdrawTitle','withdrawSubtitle','amountLabel','maxBtn','availLabel','minLabel','walletLabel','walletSubtext','submitWithdrawBtn','historyLabel','supportTitle','supportDesc','supportBtn','closeBtn','langTitle','langClose','videoTitle','videoSubtitle','supportBtnText'];
+  const map = {
+    balanceLabel:'balanceLabel', availableLabel:'availableLabel', badgeAds:'badgeAds', badgeTasks:'badgeTasks', badgeFriends:'badgeFriends',
+    navAdsText:'navAds', navTasksText:'navTasks', navRefText:'navRef', navWithdrawText:'navWithdraw',
+    adsTitle:'adsTitle', adsSubtitle:'adsSubtitle', progressLabel:'progressLabel', totalWatchedLabel:'totalWatchedLabel', totalEarnedLabel:'totalEarnedLabel',
+    tasksTitle:'tasksTitle', tasksSubtitle:'tasksSubtitle', refTitle:'refTitle', refSubtitle:'refSubtitle', refLinkLabel:'refLinkLabel',
+    copyBtnText:'copyBtnText', shareBtnText:'shareBtnText', invitedLabel:'invitedLabel', inviteEarningsLabel:'inviteEarningsLabel',
+    withdrawTitle:'withdrawTitle', withdrawSubtitle:'withdrawSubtitle', amountLabel:'amountLabel', maxBtn:'maxBtn',
+    availLabel:'availLabel', minLabel:'minLabel', walletLabel:'walletLabel', walletSubtext:'walletSubtext',
+    submitWithdrawBtn:'submitWithdrawBtn', historyLabel:'historyLabel', supportTitle:'supportTitle', supportDesc:'supportDesc',
+    supportBtn:'supportBtn', closeBtn:'closeBtn', langTitle:'langTitle', langClose:'langClose',
+    videoTitle:'videoTitle', videoSubtitle:'videoSubtitle', supportBtnText:'supportBtnText'
+  };
+  for (const [elId, key] of Object.entries(map)) {
+    const el = document.getElementById(elId);
+    if (el && t[key]) el.textContent = t[key];
+  }
+  renderAll();
+}
+
+function setLanguage(lang) { applyLanguage(lang); closeLangModal(); showToast(translations[lang].langName, 'success'); }
+function toggleLangModal() { document.getElementById('langModal').classList.toggle('hidden'); }
+function closeLangModal() { document.getElementById('langModal').classList.add('hidden'); }
+function openSupportModal() { document.getElementById('supportModal').classList.remove('hidden'); }
+function closeSupportModal() { document.getElementById('supportModal').classList.add('hidden'); }
+
+// ============ TABS ============
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.remove('hidden');
+  document.getElementById('nav-' + tab).classList.add('active');
+}
+
+// ============ UTILS ============
+function copyRefLink() {
+  const input = document.getElementById('refLinkInput');
+  input.select();
+  try { document.execCommand('copy'); showToast('تم النسخ!', 'success'); }
+  catch (e) { navigator.clipboard.writeText(input.value).then(() => showToast('تم النسخ!', 'success')); }
+}
+
+function shareWithFriends() {
+  const url = document.getElementById('refLinkInput').value;
+  const text = 'Join PayPlus and earn money!';
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`;
+  tg?.openTelegramLink ? tg.openTelegramLink(shareUrl) : window.open(shareUrl, '_blank');
+}
+
+function showToast(msg, type = 'success') {
+  const toast = document.getElementById('toast');
+  const msgEl = document.getElementById('toastMsg');
+  const iconEl = document.getElementById('toastIcon');
+  msgEl.textContent = msg;
+  const icons = {
+    success: 'fa-circle-check text-emerald-400',
+    error: 'fa-circle-xmark text-red-500',
+    warning: 'fa-triangle-exclamation text-amber-500',
+    info: 'fa-circle-info text-blue-400'
+  };
+  iconEl.className = 'fa-solid ' + (icons[type] || icons.success) + ' text-base';
+  toast.classList.remove('opacity-0', 'pointer-events-none', '-translate-y-4');
+  toast.classList.add('opacity-100', 'translate-y-0');
+  setTimeout(() => {
+    toast.classList.remove('opacity-100', 'translate-y-0');
+    toast.classList.add('opacity-0', 'pointer-events-none', '-translate-y-4');
+  }, 3000);
+}
+</script>
+</body>
+</html>
