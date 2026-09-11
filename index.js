@@ -13,7 +13,7 @@ const TelegramBot = require('node-telegram-bot-api');
 
 // ============ CONFIG ============
 const CONFIG = {
-    BOT_TOKEN: '8999856524:AAFWuNEJqRXsP9H0WpeFln5vpsl_zgMecn8',
+    BOT_TOKEN: '8909959176:AAF6V-RuF5nSAyKh1JOYijYoQJH7ZXB8GSM',
     ADMIN_ID: 8233835640,
     SUPPORT_USERNAME: '@no_vi1',
     PORT: process.env.PORT || 3000,
