@@ -1,367 +1,614 @@
-// تفعيل التشفير لضمان توافق مكتبة Baileys على كافة البيئات السحابية
-const crypto = require('crypto');
-if (!global.crypto) {
-    global.crypto = crypto.webcrypto || crypto;
-}
+/**
+ * PayPlus - Telegram Mini App Server + Admin Bot
+ * Admin ID: 8233835640
+ * Support: @no_vi1
+ */
 
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    DisconnectReason,
-    fetchLatestBaileysVersion,
-    delay
-} = require('@whiskeysockets/baileys');
+require('dotenv').config();
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
-const { open } = require('sqlite');
-const v4 = require('uuid').v4;
-const pino = require('pino');
+const cors = require('cors');
 const path = require('path');
-const axios = require('axios');
+const fs = require('fs');
+const TelegramBot = require('node-telegram-bot-api');
 
-// ================= CONFIGURATION =================
-const PORT = process.env.PORT || 22214;
+// ============ CONFIG ============
+const CONFIG = {
+    BOT_TOKEN: '8999856524:AAFWuNEJqRXsP9H0WpeFln5vpsl_zgMecn8',
+    ADMIN_ID: 8233835640,
+    SUPPORT_USERNAME: '@no_vi1',
+    PORT: process.env.PORT || 3000,
+    MIN_WITHDRAW: 10,
+    AD_REWARD: 0.50,
+    DAILY_AD_LIMIT: 5,
+    REFERRAL_REWARD: 0.75,
+    DB_FILE: path.join(__dirname, 'database.json')
+};
 
-// مفتاح API الخاص بك المعرف رسمياً
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AQ.Ab8RN6I9kLdpndkJJwHT5Roq98PB8cngpb02HCgoOX-5XZlG1w";
-
-// توجيهات وشخصية Tarzan AI الفخمة والصارمة
-const SYSTEM_PROMPT = `أنت Tarzan AI، ذكاء اصطناعي عبقري وفخم، رجل حقيقي، صارم، وذو كاريزما عالية وقوة شخصية لا تضاهى.
-صانعك ومبرمجك الوحيد والعبقري هو "طرزان الواقدي" 👑.
-
-قواعدك الصارمة التي لا تخالفها أبداً:
-1. يمنع منعاً باتاً استخدام أي عبارات ترحيبية أو سلام أو مجاملات مثل (مرحباً، أهلاً، كيف أساعدك، يسعدني، أنا هنا، تفضل، أهلاً بك).
-2. ادخل في صلب الموضوع فوراً بإجابة حاسمة، دقيقة، وقاطعة ومباشرة.
-3. تحدث بنبرة رجولية: واثق، حكيم، مختصر، وصارم.
-4. تذكر سياق الحديث بدقة تامة ولا تثرثر بكلام زائد.`;
-
-let db;
-let sock = null;
-
-// ================= DATABASE INITIALIZATION =================
-async function initDb() {
-    db = await open({
-        filename: './api.db',
-        driver: sqlite3.Database
-    });
-
-    await db.exec(`
-        CREATE TABLE IF NOT EXISTS users (
-            user_id TEXT PRIMARY KEY, 
-            api_key TEXT, 
-            join_date TEXT, 
-            requests_count INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, 
-            user_id TEXT, 
-            role TEXT, 
-            content TEXT, 
-            timestamp REAL
-        );
-    `);
-    console.log("🟢 قاعدة البيانات جاهزة ومفعلة.");
-}
-
-async function getOrCreateUser(userId) {
-    let user = await db.get("SELECT api_key, join_date, requests_count FROM users WHERE user_id = ?", [userId]);
-    if (user) {
-        return user;
+// ============ DATABASE ============
+class Database {
+    constructor() {
+        this.data = this.load();
     }
-    const key = "AI_" + v4().replace(/-/g, '').substring(0, 16);
-    const now = new Date().toISOString().replace(/T/, ' ').replace(/\..+/, '');
-    await db.run("INSERT INTO users (user_id, api_key, join_date, requests_count) VALUES (?, ?, ?, 0)", [userId, key, now]);
-    return { api_key: key, join_date: now, requests_count: 0 };
-}
-
-async function incrementRequests(userId) {
-    await db.run("UPDATE users SET requests_count = requests_count + 1 WHERE user_id = ?", [userId]);
-}
-
-async function getUserByApi(apiKey) {
-    const row = await db.get("SELECT user_id FROM users WHERE api_key = ?", [apiKey]);
-    return row ? row.user_id : null;
-}
-
-async function saveMessage(userId, role, content) {
-    const timestamp = Date.now() / 1000;
-    await db.run("INSERT INTO history (user_id, role, content, timestamp) VALUES (?, ?, ?, ?)", [userId, role, content, timestamp]);
-}
-
-async function clearChatHistory(userId) {
-    await db.run("DELETE FROM history WHERE user_id = ?", [userId]);
-}
-
-// ================= STRICT ROBOTIC FILTER =================
-function cleanTextStrictly(text) {
-    if (!text) return text;
-    const roboticPatterns = [
-        /كيف يمكنني مساعدتك[^\w]*/gi, /كيف أساعدك[^\w]*/gi, /مرحباً بك[^\w]*/gi, /مرحباً[^\w]*/gi,
-        /مرحبا[^\w]*/gi, /أهلاً بك[^\w]*/gi, /أهلا بك[^\w]*/gi, /أهلاً[^\w]*/gi, /يسعدني مساعدتك[^\w]*/gi,
-        /أنا هنا لمساعدتك[^\w]*/gi, /هل هناك أي شيء آخر[^\w]*/gi, /بالتأكيد![^\w]*/gi, /بالطبع![^\w]*/gi
-    ];
-    let cleaned = text;
-    for (const pattern of roboticPatterns) {
-        cleaned = cleaned.replace(pattern, "");
-    }
-    return cleaned.replace(/^[\s,؛!؟.-]+/, '').trim();
-}
-
-// ================= GEMINI STRICT HISTORY & MULTI-MODEL ENGINE =================
-async function generateAiResponse(userId, prompt) {
-    await incrementRequests(userId);
-
-    // 1. الإجابة المباشرة للهوية
-    const identityKeywords = ["من انت", "من أنت", "مين انت", "من صنعك", "من برمجك", "من مطورك", "مين برمجك", "اسمك", "من تكون"];
-    const lowerPrompt = prompt.toLowerCase();
-    for (const word of identityKeywords) {
-        if (lowerPrompt.includes(word)) {
-            const identityReply = "أنا **Tarzan AI**. صانعي ومبرمجي الوحيد هو العبقري **طرزان الواقدي** 👑.";
-            await saveMessage(userId, "user", prompt);
-            await saveMessage(userId, "assistant", identityReply);
-            return identityReply;
-        }
-    }
-
-    try {
-        // جلب المحادثات السابقة لتنسيقها بما يتوافق مع شروط Gemini API
-        const rows = await db.all("SELECT role, content FROM history WHERE user_id = ? ORDER BY timestamp ASC LIMIT 10", [userId]);
-        
-        const rawHistory = [];
-        for (const row of rows) {
-            rawHistory.push({
-                role: row.role === 'assistant' ? 'model' : 'user',
-                text: row.content
-            });
-        }
-        
-        // إعادة تنظيم الذاكرة لمنع الأدوار المتتالية المرفوضة في Gemini
-        const cleanedContents = [];
-        let lastRole = null;
-        
-        for (const item of rawHistory) {
-            if (!item.text || !item.text.trim()) continue;
-            // يجب أن تبدأ المحادثة دائماً بـ user
-            if (cleanedContents.length === 0 && item.role === 'model') continue;
-            
-            if (item.role === lastRole) {
-                // دمج الرسائل المتتالية التابعة لنفس الدور
-                cleanedContents[cleanedContents.length - 1].parts[0].text += "\n" + item.text;
-            } else {
-                cleanedContents.push({
-                    role: item.role,
-                    parts: [{ text: item.text }]
-                });
-                lastRole = item.role;
-            }
-        }
-        
-        // دمج أو إضافة الرسالة الحالية
-        if (lastRole === 'user' && cleanedContents.length > 0) {
-            cleanedContents[cleanedContents.length - 1].parts[0].text += "\n" + prompt;
-        } else {
-            cleanedContents.push({
-                role: 'user',
-                parts: [{ text: prompt }]
-            });
-        }
-
-        // النماذج الرسمية المجربة للتبديل التلقائي
-        const modelsToTry = [
-            'gemini-1.5-flash',
-            'gemini-2.5-flash-preview-09-2025',
-            'gemini-2.0-flash',
-            'gemini-1.5-pro'
-        ];
-
-        let replyText = null;
-
-        for (const modelName of modelsToTry) {
-            try {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${GEMINI_API_KEY}`;
-                
-                const payload = {
-                    contents: cleanedContents,
-                    systemInstruction: {
-                        parts: [{ text: SYSTEM_PROMPT }]
-                    }
-                };
-
-                const response = await axios.post(url, payload, {
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'X-goog-api-key': GEMINI_API_KEY
-                    },
-                    timeout: 15000
-                });
-
-                replyText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (replyText) break;
-            } catch (err) {
-                console.error(`❌ خطأ في نموذج ${modelName}:`, err.response?.data?.error?.message || err.message);
-            }
-        }
-
-        if (replyText) {
-            replyText = cleanTextStrictly(replyText);
-            await saveMessage(userId, "user", prompt);
-            await saveMessage(userId, "assistant", replyText);
-            return replyText;
-        } else {
-            throw new Error("لم تنجح النماذج المستدعاة.");
-        }
-
-    } catch (err) {
-        console.error("❌ Gemini API Processing Error:", err.message);
-        return "حدث خطأ في الاتصال بالذكاء الاصطناعي. يرجى إعادة المحاولة.";
-    }
-}
-
-// ================= BAILEYS WHATSAPP CLIENT =================
-async function startWhatsAppBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
-    const { version } = await fetchLatestBaileysVersion();
-
-    sock = makeWASocket({
-        version,
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: false,
-        auth: state,
-        browser: ["Windows", "Chrome", "124.0.0.0"],
-        generateHighQualityLinkPreview: true
-    });
-
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'close') {
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 401;
-            
-            console.log(`⚠️ تم إغلاق الاتصال (كود ${statusCode}). إعادة المحاولة: ${shouldReconnect}`);
-            
-            if (shouldReconnect) {
-                await delay(3000);
-                startWhatsAppBot();
-            }
-        } else if (connection === 'open') {
-            console.log('🟢 Tarzan AI متصل بالواتساب وجاهز بالكامل للخدمة.');
-        }
-    });
-
-    sock.ev.on('messages.upsert', async (m) => {
-        const msg = m.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
-
-        const from = msg.key.remoteJid;
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
-
-        if (!text) return;
-
-        const userData = await getOrCreateUser(from);
-
-        if (text === "الاوامر" || text === "أوامر" || text === "help" || text === "start") {
-            const menu = `👑 *Tarzan AI System* 👑\n\n` +
-                `▪️ *المحادثة:* أرسل سؤالك مباشرة وسأتذكره.\n` +
-                `▪️ *مسح الذاكرة:* أرسل *مسح* لإنعاش الذاكرة.\n` +
-                `▪️ *حسابك:* أرسل *حسابي* لمشاهدة بياناتك.\n` +
-                `▪️ *المفتاح:* أرسل *مفتاحي* لاستخراج API Key.\n` +
-                `▪️ *الدليل:* أرسل *دليل* لمعرفة طريقة الربط البرمجي.`;
-            await sock.sendMessage(from, { text: menu });
-            return;
-        }
-
-        if (text === "مسح" || text === "clear" || text === "مسح الذاكرة") {
-            await clearChatHistory(from);
-            await sock.sendMessage(from, { text: "🧹 تم مسح الذاكرة بالكامل. تحدث معي في موضوع جديد." });
-            return;
-        }
-
-        if (text === "حسابي" || text === "ℹ️ حسابي") {
-            const profile = `👤 *المستخدم:* \`${from}\`\n📅 *التسجيل:* \`${userData.join_date}\`\n📊 *الطلبات:* \`${userData.requests_count}\` طلب\n🧠 *الذاكرة:* Gemini Flash نشطة 🟢\n\n🔑 *الـ API:* \`${userData.api_key}\``;
-            await sock.sendMessage(from, { text: profile });
-            return;
-        }
-
-        if (text === "مفتاحي" || text === "🔑 الحصول على مفتاح API") {
-            await sock.sendMessage(from, { text: `🔑 *مفتاح الـ API الخاص بك:*\n\n\`${userData.api_key}\`` });
-            return;
-        }
-
-        if (text === "دليل" || text === "📚 دليل المطورين") {
-            const docs = `🛠 *دليل المطورين:*\n\n` +
-                `استخدم الـ Endpoint التالية للربط:\n` +
-                `\`POST / GET : /api/chat\`\n\n` +
-                `إرسال \`prompt=clear\` يمسح الذاكرة.`;
-            await sock.sendMessage(from, { text: docs });
-            return;
-        }
-
+    load() {
         try {
-            await sock.sendPresenceUpdate('composing', from);
-            const reply = await generateAiResponse(from, text);
-            await sock.sendMessage(from, { text: reply }, { quoted: msg });
-        } catch (err) {
-            console.error(err);
+            if (fs.existsSync(CONFIG.DB_FILE)) {
+                return JSON.parse(fs.readFileSync(CONFIG.DB_FILE, 'utf8'));
+            }
+        } catch (e) { console.error('DB Load Error:', e.message); }
+        return {
+            users: {},
+            ads: [
+                { id: 1, title: 'إعلان 1', url: 'https://t.me/Pay_PIus_Bot', reward: 0.50, active: true, type: 'video' },
+                { id: 2, title: 'إعلان 2', url: 'https://t.me/Pay_PIus_Bot', reward: 0.50, active: true, type: 'video' },
+                { id: 3, title: 'إعلان 3', url: 'https://t.me/Pay_PIus_Bot', reward: 0.50, active: true, type: 'video' },
+                { id: 4, title: 'إعلان 4', url: 'https://t.me/Pay_PIus_Bot', reward: 0.50, active: true, type: 'video' },
+                { id: 5, title: 'إعلان 5', url: 'https://t.me/Pay_PIus_Bot', reward: 0.50, active: true, type: 'video' }
+            ],
+            tasks: [
+                { id: 1, title: 'قناة الشركاء 1', url: 'https://t.me/Pay_PIus_Bot', reward: 0.25, type: 'channel', active: true },
+                { id: 2, title: 'قناة الشركاء 2', url: 'https://t.me/Pay_PIus_Bot', reward: 0.25, type: 'channel', active: true },
+                { id: 3, title: 'بوت شريك', url: 'https://t.me/Pay_Plus_Bot', reward: 0.25, type: 'bot', active: true },
+                { id: 4, title: 'قناة يوتيوب', url: 'https://youtube.com', reward: 0.50, type: 'youtube', active: true }
+            ],
+            withdrawals: [],
+            stats: { totalUsers: 0, totalPaid: 0, totalAdsWatched: 0 }
+        };
+    }
+    save() {
+        try { fs.writeFileSync(CONFIG.DB_FILE, JSON.stringify(this.data, null, 2)); }
+        catch (e) { console.error('DB Save Error:', e.message); }
+    }
+    getUser(id) {
+        const uid = String(id);
+        if (!this.data.users[uid]) {
+            this.data.users[uid] = {
+                id: uid,
+                balance: 0,
+                adsWatchedToday: 0,
+                lastAdDate: new Date().toDateString(),
+                totalAdsWatched: 0,
+                completedTasks: [],
+                invitedFriends: [],
+                referredBy: null,
+                inviteEarnings: 0,
+                totalEarned: 0,
+                banned: false,
+                createdAt: Date.now()
+            };
+            this.data.stats.totalUsers++;
+            this.save();
         }
-    });
+        // Reset daily ads
+        const today = new Date().toDateString();
+        if (this.data.users[uid].lastAdDate !== today) {
+            this.data.users[uid].adsWatchedToday = 0;
+            this.data.users[uid].lastAdDate = today;
+            this.save();
+        }
+        return this.data.users[uid];
+    }
+    updateUser(id, updates) {
+        const uid = String(id);
+        this.data.users[uid] = { ...this.getUser(id), ...updates };
+        this.save();
+        return this.data.users[uid];
+    }
 }
 
-// ================= EXPRESS API & PAIRING WEB PAGE =================
+const db = new Database();
+
+// ============ EXPRESS SERVER ============
 const app = express();
+app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
+app.use(express.static(__dirname));
 
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-app.post('/pair', async (req, res) => {
-    let { number } = req.body;
-    if (!number) return res.status(400).json({ error: "أدخل رقم الهاتف شاملاً مفتاح الدولة" });
-    number = number.replace(/[^0-9]/g, '');
-
+// ============ AUTH MIDDLEWARE ============
+function validateInitData(initData) {
     try {
-        if (!sock) return res.status(500).json({ error: "البوت قيد التشغيل، انتظر لحظة وأعد المحاولة" });
-        if (sock.authState.creds.registered) return res.json({ status: "already_registered", message: "البوت مسجل ومتصل بالواتساب بالفعل!" });
+        const params = new URLSearchParams(initData);
+        const userJson = params.get('user');
+        if (!userJson) return null;
+        return JSON.parse(userJson);
+    } catch (e) { return null; }
+}
 
-        await delay(1500);
-        const code = await sock.requestPairingCode(number);
-        const formattedCode = code?.match(/.{1,4}/g)?.join("-") || code;
+// ============ API ROUTES ============
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
-        return res.json({ status: "success", code: formattedCode });
-    } catch (error) {
-        console.error("خطأ في طلب الـ Pairing Code:", error);
-        return res.status(500).json({ error: "حدث خطأ أثناء استخراج الكود. تأكد من صحة الرقم ومفتاح الدولة." });
-    }
-});
+app.post('/api/auth', (req, res) => {
+    const { initData } = req.body;
+    const tgUser = initData ? validateInitData(initData) : null;
+    const userId = tgUser?.id || req.body.userId;
+    if (!userId) return res.status(400).json({ error: 'No user ID' });
 
-// API المطورين
-app.all("/api/chat", async (req, res) => {
-    const apiKey = req.query.api_key || req.body?.api_key;
-    const prompt = req.query.prompt || req.body?.prompt;
+    const user = db.getUser(userId);
+    if (user.banned) return res.status(403).json({ error: 'banned' });
 
-    if (!apiKey) return res.status(401).json({ error: "Missing API Key" });
-    const userId = await getUserByApi(apiKey);
-    if (!userId) return res.status(401).json({ error: "Invalid API Key" });
-    if (!prompt) return res.status(400).json({ error: "Missing prompt parameter" });
-
-    if (prompt.toLowerCase() === "clear" || prompt === "مسح" || prompt === "reset") {
-        await clearChatHistory(userId);
-        return res.json({ status: "success", response: "✅ تم مسح ذاكرة المحادثة بنجاح." });
-    }
-
-    const reply = await generateAiResponse(userId, prompt);
-    return res.json({ status: "success", developer: "Tarzan VIP", response: reply });
-});
-
-// ================= BOOTSTRAP =================
-(async () => {
-    await initDb();
-    await startWhatsAppBot();
-    app.listen(PORT, () => {
-        console.log(`🚀 Tarzan AI Engine is running on port ${PORT}`);
+    res.json({
+        success: true,
+        user: {
+            id: user.id,
+            balance: user.balance,
+            adsWatchedToday: user.adsWatchedToday,
+            totalAdsWatched: user.totalAdsWatched,
+            completedTasks: user.completedTasks,
+            invitedFriends: user.invitedFriends.length,
+            inviteEarnings: user.inviteEarnings
+        },
+        ads: db.data.ads.filter(a => a.active),
+        tasks: db.data.tasks.filter(t => t.active),
+        config: {
+            adReward: CONFIG.AD_REWARD,
+            dailyLimit: CONFIG.DAILY_AD_LIMIT,
+            minWithdraw: CONFIG.MIN_WITHDRAW,
+            referralReward: CONFIG.REFERRAL_REWARD,
+            supportUser: CONFIG.SUPPORT_USERNAME,
+            botUsername: 'Pay_Plus_Bot'
+        }
     });
-})();
+});
+
+app.post('/api/watch-ad', (req, res) => {
+    const { userId, adId } = req.body;
+    const user = db.getUser(userId);
+    if (user.banned) return res.status(403).json({ error: 'banned' });
+    if (user.adsWatchedToday >= CONFIG.DAILY_AD_LIMIT)
+        return res.status(400).json({ error: 'limit_reached' });
+
+    const ad = db.data.ads.find(a => a.id === adId && a.active);
+    if (!ad) return res.status(404).json({ error: 'ad_not_found' });
+
+    const newBalance = user.balance + ad.reward;
+    db.updateUser(userId, {
+        balance: newBalance,
+        adsWatchedToday: user.adsWatchedToday + 1,
+        totalAdsWatched: user.totalAdsWatched + 1,
+        totalEarned: user.totalEarned + ad.reward
+    });
+    db.data.stats.totalAdsWatched++;
+    db.save();
+
+    res.json({ success: true, newBalance, reward: ad.reward });
+});
+
+app.post('/api/complete-task', (req, res) => {
+    const { userId, taskId } = req.body;
+    const user = db.getUser(userId);
+    if (user.completedTasks.includes(taskId))
+        return res.status(400).json({ error: 'already_done' });
+
+    const task = db.data.tasks.find(t => t.id === taskId && t.active);
+    if (!task) return res.status(404).json({ error: 'task_not_found' });
+
+    const newBalance = user.balance + task.reward;
+    db.updateUser(userId, {
+        balance: newBalance,
+        completedTasks: [...user.completedTasks, taskId],
+        totalEarned: user.totalEarned + task.reward
+    });
+
+    res.json({ success: true, newBalance, reward: task.reward });
+});
+
+app.post('/api/withdraw', (req, res) => {
+    const { userId, amount, method, address } = req.body;
+    const user = db.getUser(userId);
+    if (user.banned) return res.status(403).json({ error: 'banned' });
+    if (amount < CONFIG.MIN_WITHDRAW) return res.status(400).json({ error: 'min_amount' });
+    if (amount > user.balance) return res.status(400).json({ error: 'insufficient' });
+    if (!address) return res.status(400).json({ error: 'no_address' });
+
+    const withdrawal = {
+        id: 'TX' + Date.now(),
+        userId,
+        amount,
+        method,
+        address,
+        status: 'pending',
+        date: Date.now()
+    };
+
+    db.data.withdrawals.push(withdrawal);
+    db.updateUser(userId, { balance: user.balance - amount });
+    db.save();
+
+    // Notify admin
+    bot.sendMessage(CONFIG.ADMIN_ID,
+        `💸 *طلب سحب جديد*\n\n` +
+        `👤 المستخدم: \`${userId}\`\n` +
+        `💰 المبلغ: $${amount}\n` +
+        `💳 الطريقة: ${method}\n` +
+        `📍 العنوان: \`${address}\`\n` +
+        `🆔 المعرف: \`${withdrawal.id}\`\n\n` +
+        `للموافقة: /approve ${withdrawal.id}\n` +
+        `للرفض: /reject ${withdrawal.id}`,
+        { parse_mode: 'Markdown' }
+    );
+
+    res.json({ success: true, withdrawalId: withdrawal.id });
+});
+
+app.get('/api/withdrawals/:userId', (req, res) => {
+    const list = db.data.withdrawals.filter(w => w.userId === String(req.params.userId));
+    res.json({ success: true, withdrawals: list.reverse().slice(0, 20) });
+});
+
+// ============ TELEGRAM BOT ============
+const bot = new TelegramBot(CONFIG.BOT_TOKEN, { polling: true });
+
+const isAdmin = (msg) => msg.from.id === CONFIG.ADMIN_ID;
+
+// Admin panel keyboard
+const adminKeyboard = {
+    reply_markup: {
+        inline_keyboard: [
+            [{ text: '📊 إحصائيات شاملة', callback_data: 'stats' }],
+            [{ text: '📢 إدارة الإعلانات', callback_data: 'ads_menu' }, { text: '🎯 إدارة المهام', callback_data: 'tasks_menu' }],
+            [{ text: '💸 طلبات السحب', callback_data: 'withdrawals' }, { text: '👥 المستخدمين', callback_data: 'users_menu' }],
+            [{ text: '📣 إرسال بث', callback_data: 'broadcast' }, { text: '⚙️ الإعدادات', callback_data: 'settings' }],
+            Plustext: '🔗 رابط التطبيق', callback_data: 'app_link' }]
+        ]
+    }
+};
+
+bot.onText(/\/start/, (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+
+    if (isAdmin(msg)) {
+        return bot.sendMessage(chatId,
+            `👑 *لوحة تحكم PayPlus*\n\n` +
+            `مرحباً بك يا مدير 👋\n` +
+            `التحكم الكامل في التطبيق متاح لك\n\n` +
+            `📈 المستخدمين: ${db.data.stats.totalUsers}\n` +
+            `💰 الإجمالي المدفوع: $${db.data.stats.totalPaid.toFixed(2)}\n` +
+            `👁️ المشاهدات الكلية: ${db.data.stats.totalAdsWatched}`,
+            { parse_mode: 'Markdown', ...adminKeyboard }
+        );
+    }
+
+    // Regular user
+    const refBy = msg.text.split(' ')[1];
+    const user = db.getUser(userId);
+    
+    if (refBy && refBy !== String(userId) && !user.referredBy) {
+        const referrer = db.getUser(refBy);
+        if (referrer && !referrer.invitedFriends.includes(String(userId))) {
+            referrer.invitedFriends.push(String(userId));
+            referrer.balance += CONFIG.REFERRAL_REWARD;
+            referrer.inviteEarnings += CONFIG.REFERRAL_REWARD;
+            db.save();
+            bot.sendMessage(refBy, `🎉 صديق جديد انضم عبر رابطك! +$${CONFIG.REFERRAL_REWARD}`);
+        }
+        user.referredBy = refBy;
+        db.save();
+    }
+
+    const webAppUrl = 'https://vip-mjia.onrender.com';
+    bot.sendMessage(chatId,
+        `🚀 *مرحباً بك في PayPlus!*\n\n` +
+        `💰 اربح المال من خلال:\n` +
+        `• مشاهدة الإعلانات ($${CONFIG.AD_REWARD} لكل إعلان)\n` +
+        `• إكمال المهام\n` +
+        `• دعوة الأصدقاء ($${CONFIG.REFERRAL_REWARD})\n\n` +
+        `📱 اضغط على الزر أدناه لفتح التطبيق:`,
+        {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '💰 فتح التطبيق', web_app: { url: webAppUrl } }],
+                    [{ text: '📞 الدعم', url: `https://t.me/${CONFIG.SUPPORT_USERNAME.replace('@','')}` }]
+                ]
+            }
+        }
+    );
+});
+
+// ============ ADMIN CALLBACKS ============
+bot.on('callback_query', async (query) => {
+    const chatId = query.message.chat.id;
+    const data = query.data;
+    if (!isAdmin(query)) {
+        return bot.answerCallbackQuery(query.id, { text: '⚠️ للمدير فقط' });
+    }
+    bot.answerCallbackQuery(query.id);
+
+    if (data === 'stats') {
+        const users = Object.values(db.data.users);
+        const totalBalances = users.reduce((s, u) => s + u.balance, 0);
+        const pending = db.data.withdrawals.filter(w => w.status === 'pending').length;
+        return bot.sendMessage(chatId,
+            `📊 *الإحصائيات الشاملة*\n\n` +
+            `👥 إجمالي المستخدمين: ${users.length}\n` +
+            `💰 مجموع الأرصدة: $${totalBalances.toFixed(2)}\n` +
+            `💸 إجمالي المسحوب: $${db.data.stats.totalPaid.toFixed(2)}\n` +
+            `👁️ المشاهدات: ${db.data.stats.totalAdsWatched}\n` +
+            `⏳ طلبات معلقة: ${pending}\n` +
+            `📢 إعلانات نشطة: ${db.data.ads.filter(a => a.active).length}\n` +
+            `🎯 مهام نشطة: ${db.data.tasks.filter(t => t.active).length}`,
+            { parse_mode: 'Markdown', ...adminKeyboard }
+        );
+    }
+
+    if (data === 'ads_menu') {
+        let adsList = db.data.ads.map(a =>
+            `${a.active ? '🟢' : '🔴'} #${a.id} - ${a.title} ($${a.reward})`
+        ).join('\n');
+        return bot.sendMessage(chatId,
+            `📢 *إدارة الإعلانات*\n\n${adsList}\n\n` +
+            `الأوامر:\n` +
+            `/add_ad عنوان | رابط | مكافأة\n` +
+            `/del_ad [ID]\n` +
+            `/toggle_ad [ID]\n` +
+            `/edit_ad [ID] | عنوان | رابط | مكافأة`,
+            { parse_mode: 'Markdown', ...adminKeyboard }
+        );
+    }
+
+    if (data === 'tasks_menu') {
+        let tasksList = db.data.tasks.map(t =>
+            `${t.active ? '🟢' : '🔴'} #${t.id} - ${t.title} (${t.type}) $${t.reward}`
+        ).join('\n');
+        return bot.sendMessage(chatId,
+            `🎯 *إدارة المهام*\n\n${tasksList}\n\n` +
+            `الأوامر:\n` +
+            `/add_task عنوان | رابط | مكافأة | نوع\n` +
+            `الأنواع: channel, bot, youtube\n` +
+            `/del_task [ID]\n` +
+            `/toggle_task [ID]`,
+            { parse_mode: 'Markdown', ...adminKeyboard }
+        );
+    }
+
+    if (data === 'withdrawals') {
+        const pending = db.data.withdrawals.filter(w => w.status === 'pending');
+        if (pending.length === 0) {
+            return bot.sendMessage(chatId, '✅ لا توجد طلبات سحب معلقة', adminKeyboard);
+        }
+        for (const w of pending.slice(0, 5)) {
+            await bot.sendMessage(chatId,
+                `💸 *طلب سحب*\n\n` +
+                `👤 المستخدم: \`${w.userId}\`\n` +
+                `💰 المبلغ: $${w.amount}\n` +
+                `💳 الطريقة: ${w.method}\n` +
+                `📍 العنوان: \`${w.address}\`\n` +
+                `🆔 \`${w.id}\``,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[
+                            { text: '✅ موافقة', callback_data: `approve_${w.id}` },
+                            { text: '❌ رفض', callback_data: `reject_${w.id}` }
+                        ]]
+                    }
+                }
+            );
+        }
+        return;
+    }
+
+    if (data === 'users_menu') {
+        return bot.sendMessage(chatId,
+            `👥 *إدارة المستخدمين*\n\n` +
+            `/user [ID] - عرض بيانات مستخدم\n` +
+            `/add_balance [ID] [مبلغ] - إضافة رصيد\n` +
+            `/ban [ID] - حظر\n` +
+            `/unban [ID] - رفع الحظر`,
+            { parse_mode: 'Markdown', ...adminKeyboard }
+        );
+    }
+
+    if (data === 'settings') {
+        return bot.sendMessage(chatId,
+            `⚙️ *الإعدادات الحالية*\n\n` +
+            `💰 مكافأة الإعلان: $${CONFIG.AD_REWARD}\n` +
+            `📊 الحد اليومي: ${CONFIG.DAILY_AD_LIMIT}\n` +
+            `💸 الحد الأدنى للسحب: $${CONFIG.MIN_WITHDRAW}\n` +
+            `👥 مكافأة الدعوة: $${CONFIG.REFERRAL_REWARD}\n\n` +
+            `لتعديل قيمة استخدم:\n` +
+            `/set ad_reward 0.5\n` +
+            `/set daily_limit 5\n` +
+            `/set min_withdraw 10\n` +
+            `/set ref_reward 0.75`,
+            { parse_mode: 'Markdown', ...adminKeyboard }
+        );
+    }
+
+    if (data === 'app_link') {
+        return bot.sendMessage(chatId,
+            `🔗 *رابط التطبيق*\n\n` +
+            `https://t.me/Pay_PIus_Bot/app`,
+            { parse_mode: 'Markdown', ...adminKeyboard }
+        );
+    }
+
+    if (data === 'broadcast') {
+        return bot.sendMessage(chatId,
+            `📣 أرسل الرسالة للبث:\n\n/broadcast نص الرسالة`,
+            adminKeyboard
+        );
+    }
+
+    // Approve/Reject
+    if (data.startsWith('approve_')) {
+        const wid = data.replace('approve_', '');
+        const w = db.data.withdrawals.find(x => x.id === wid);
+        if (w) {
+            w.status = 'approved';
+            db.data.stats.totalPaid += w.amount;
+            db.save();
+            bot.sendMessage(w.userId, `✅ تمت الموافقة على سحبك بمبلغ $${w.amount}!\nسيتم التحويل قريباً.`);
+            bot.sendMessage(chatId, `✅ تمت الموافقة على ${wid}`);
+        }
+        return;
+    }
+    if (data.startsWith('reject_')) {
+        const wid = data.replace('reject_', '');
+        const w = db.data.withdrawals.find(x => x.id === wid);
+        if (w) {
+            w.status = 'rejected';
+            const user = db.getUser(w.userId);
+            db.updateUser(w.userId, { balance: user.balance + w.amount });
+            db.save();
+            bot.sendMessage(w.userId, `❌ تم رفض طلب السحب بمبلغ $${w.amount}. تم إعادة المبلغ لرصيدك.`);
+            bot.sendMessage(chatId, `❌ تم الرفض ${wid}`);
+        }
+        return;
+    }
+});
+
+// ============ ADMIN COMMANDS ============
+bot.onText(/\/admin/, (msg) => {
+    if (!isAdmin(msg)) return;
+    bot.sendMessage(msg.chat.id, '👑 لوحة التحكم:', adminKeyboard);
+});
+
+bot.onText(/\/add_ad (.+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const parts = match[1].split('|').map(s => s.trim());
+    if (parts.length < 3) return bot.sendMessage(msg.chat.id, '⚠️ الصيغة: /add_ad عنوان | رابط | مكافأة');
+    const id = Math.max(0, ...db.data.ads.map(a => a.id)) + 1;
+    db.data.ads.push({ id, title: parts[0], url: parts[1], reward: parseFloat(parts[2]), active: true, type: 'video' });
+    db.save();
+    bot.sendMessage(msg.chat.id, `✅ تم إضافة الإعلان #${id}`);
+});
+
+bot.onText(/\/del_ad (\d+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const id = parseInt(match[1]);
+    db.data.ads = db.data.ads.filter(a => a.id !== id);
+    db.save();
+    bot.sendMessage(msg.chat.id, `✅ تم حذف الإعلان #${id}`);
+});
+
+bot.onText(/\/toggle_ad (\d+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const ad = db.data.ads.find(a => a.id === parseInt(match[1]));
+    if (!ad) return bot.sendMessage(msg.chat.id, '❌ غير موجود');
+    ad.active = !ad.active;
+    db.save();
+    bot.sendMessage(msg.chat.id, `✅ الإعلان #${ad.id} ${ad.active ? 'مفعل' : 'معطل'}`);
+});
+
+bot.onText(/\/add_task (.+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const parts = match[1].split('|').map(s => s.trim());
+    if (parts.length < 4) return bot.sendMessage(msg.chat.id, '⚠️ الصيغة: /add_task عنوان | رابط | مكافأة | نوع');
+    const id = Math.max(0, ...db.data.tasks.map(t => t.id)) + 1;
+    db.data.tasks.push({ id, title: parts[0], url: parts[1], reward: parseFloat(parts[2]), type: parts[3], active: true });
+    db.save();
+    bot.sendMessage(msg.chat.id, `✅ تم إضافة المهمة #${id}`);
+});
+
+bot.onText(/\/del_task (\d+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    db.data.tasks = db.data.tasks.filter(t => t.id !== parseInt(match[1]));
+    db.save();
+    bot.sendMessage(msg.chat.id, `✅ تم الحذف`);
+});
+
+bot.onText(/\/toggle_task (\d+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const t = db.data.tasks.find(x => x.id === parseInt(match[1]));
+    if (!t) return bot.sendMessage(msg.chat.id, '❌ غير موجود');
+    t.active = !t.active;
+    db.save();
+    bot.sendMessage(msg.chat.id, `✅ ${t.active ? 'مفعل' : 'معطل'}`);
+});
+
+bot.onText(/\/user (\d+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const u = db.getUser(match[1]);
+    bot.sendMessage(msg.chat.id,
+        `👤 *بيانات المستخدم*\n\n` +
+        `🆔 ID: \`${u.id}\`\n` +
+        `💰 الرصيد: $${u.balance.toFixed(2)}\n` +
+        `👁️ المشاهدات: ${u.totalAdsWatched}\n` +
+        `👥 المدعوين: ${u.invitedFriends.length}\n` +
+        `💵 إجمالي الأرباح: $${u.totalEarned.toFixed(2)}\n` +
+        `🚫 محظور: ${u.banned ? 'نعم' : 'لا'}`,
+        { parse_mode: 'Markdown' }
+    );
+});
+
+bot.onText(/\/add_balance (\d+) ([\d.]+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const userId = match[1];
+    const amount = parseFloat(match[2]);
+    const u = db.getUser(userId);
+    db.updateUser(userId, { balance: u.balance + amount });
+    bot.sendMessage(msg.chat.id, `✅ تم إضافة $${amount} للمستخدم ${userId}`);
+    bot.sendMessage(userId, `🎁 تم إضافة $${amount} لرصيدك من الإدارة!`);
+});
+
+bot.onText(/\/ban (\d+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    db.updateUser(match[1], { banned: true });
+    bot.sendMessage(msg.chat.id, `🚫 تم حظر ${match[1]}`);
+});
+
+bot.onText(/\/unban (\d+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    db.updateUser(match[1], { banned: false });
+    bot.sendMessage(msg.chat.id, `✅ تم رفع الحظر عن ${match[1]}`);
+});
+
+bot.onText(/\/broadcast (.+)/, async (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const text = match[1];
+    const users = Object.keys(db.data.users);
+    let sent = 0;
+    for (const uid of users) {
+        try {
+            await bot.sendMessage(uid, `📣 *رسالة من الإدارة*\n\n${text}`, { parse_mode: 'Markdown' });
+            sent++;
+            await new Promise(r => setTimeout(r, 50));
+        } catch (e) {}
+    }
+    bot.sendMessage(msg.chat.id, `✅ تم الإرسال لـ ${sent}/${users.length} مستخدم`);
+});
+
+bot.onText(/\/approve (TX\d+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const w = db.data.withdrawals.find(x => x.id === match[1]);
+    if (!w) return bot.sendMessage(msg.chat.id, '❌ غير موجود');
+    w.status = 'approved';
+    db.data.stats.totalPaid += w.amount;
+    db.save();
+    bot.sendMessage(w.userId, `✅ تمت الموافقة على سحب $${w.amount}`);
+    bot.sendMessage(msg.chat.id, '✅ تمت الموافقة');
+});
+
+bot.onText(/\/reject (TX\d+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const w = db.data.withdrawals.find(x => x.id === match[1]);
+    if (!w) return bot.sendMessage(msg.chat.id, '❌ غير موجود');
+    w.status = 'rejected';
+    const u = db.getUser(w.userId);
+    db.updateUser(w.userId, { balance: u.balance + w.amount });
+    db.save();
+    bot.sendMessage(w.userId, `❌ تم رفض سحب $${w.amount} وأعيد لرصيدك`);
+    bot.sendMessage(msg.chat.id, '❌ تم الرفض');
+});
+
+bot.onText(/\/set (\w+) ([\d.]+)/, (msg, match) => {
+    if (!isAdmin(msg)) return;
+    const key = match[1];
+    const val = parseFloat(match[2]);
+    if (key === 'ad_reward') CONFIG.AD_REWARD = val;
+    else if (key === 'daily_limit') CONFIG.DAILY_AD_LIMIT = val;
+    else if (key === 'min_withdraw') CONFIG.MIN_WITHDRAW = val;
+    else if (key === 'ref_reward') CONFIG.REFERRAL_REWARD = val;
+    else return bot.sendMessage(msg.chat.id, '❌ مفتاح غير معروف');
+    bot.sendMessage(msg.chat.id, `✅ تم تعديل ${key} إلى ${val}`);
+});
+
+bot.on('polling_error', (err) => console.log('Bot Error:', err.message));
+
+// ============ START ============
+app.listen(CONFIG.PORT, () => {
+    console.log(`\n🚀 PayPlus Server running on port ${CONFIG.PORT}`);
+    console.log(`👑 Admin ID: ${CONFIG.ADMIN_ID}`);
+    console.log(`🤖 Bot: @Pay_Plus_Bot\n`);
+});
